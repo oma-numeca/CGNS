@@ -50,6 +50,7 @@ set(cgwrite_f03_FILES cgwrite_f03.F)
 set(cgread_f03_FILES cgread_f03.F)
 set(cgzconn_f03_FILES cgzconn_f03.F)
 set(cgsubreg_f03_FILES cgsubreg_f03.F)
+set(test_family_tree_FILES test_family_tree.c)
 
 # Build each test
 add_executable( cgioc              ${cgioc_FILES}              )
@@ -68,6 +69,7 @@ add_executable( write_links        ${write_links_FILES}        )
 add_executable( write_rind         ${write_rind_FILES}         )
 add_executable( write_test         ${write_test_FILES}         )
 add_executable( write_zones        ${write_zones_FILES}        )
+add_executable( test_family_tree   ${test_family_tree_FILES}   )
 
 # Conditionally build the fortran tests
 if (CGNS_ENABLE_FORTRAN)
@@ -103,6 +105,7 @@ if (CGNS_ENABLE_TESTS)
   add_test( write_rind         write_rind          )
   add_test( write_test         write_test          )
   add_test( write_zones        write_zones         )
+  add_test( test_family_tree   test_family_tree    )
 
   # Conditionally add the fortran tests
   if (CGNS_ENABLE_FORTRAN)
