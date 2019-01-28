@@ -1589,7 +1589,7 @@ int cg_node_family_write( const char* family_name, int* F)
 
     /* retrieve index */
     family = 0;
-    if( strcmp( posit->label, "Base_t" ) == 0 ) {
+    if( strcmp( posit->label, "CGNSBase_t" ) == 0 ) {
         family = ((cgns_base*)posit->posit)->family;
         nfamilies = ((cgns_base*)posit->posit)->nfamilies;
     }
@@ -1637,7 +1637,7 @@ int cg_node_nfamilies( int* nfamilies )
         return CG_ERROR;
     }
 
-    if (strcmp(posit->label,"Base_t")==0 )
+    if (strcmp(posit->label,"CGNSBase_t")==0 )
         (*nfamilies) = ((cgns_base *)posit->posit)->nfamilies;
     else if (strcmp(posit->label,"Family_t")==0)
         (*nfamilies) = ((cgns_family *)posit->posit)->nfamilies;
@@ -1682,7 +1682,6 @@ int cg_node_family_name_write( const char* node_name, const char* family_name )
     CHECK_FILE_OPEN
 
     /* verify input */
-
     if( cgi_check_strlen( node_name ))   return CG_ERROR;
 
     if ( strlen(family_name) > 33*20 ) {
@@ -1701,6 +1700,7 @@ int cg_node_family_name_write( const char* node_name, const char* family_name )
         family = ((cgns_family *)posit->posit);
 
     if( family==0 ) {
+        cgi_error( "cg_node_family_name_write not called at a Family_t position" );
         return CG_ERROR;
     }
 
