@@ -8,9 +8,8 @@ if (WIN32)
 endif (WIN32)
 
 # Include the local directory
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(BEFORE ${CMAKE_CURRENT_SOURCE_DIR})
 if (CGNS_ENABLE_HDF5)
-  add_definitions(-DBUILD_HDF5)
   if (WIN32)
     if (HDF5_LIBRARY)
      # file(STRINGS ${HDF5_LIBRARY} HDF5isDLL REGEX "__imp__H5close")
@@ -23,13 +22,10 @@ if (CGNS_ENABLE_HDF5)
   if(HDF5_NEED_MPI AND MPI_INC)
     include_directories(${MPI_INC})
   endif(HDF5_NEED_MPI AND MPI_INC)
-  if (CGNS_ENABLE_PARALLEL)
-    add_definitions(-DBUILD_PARALLEL)
-  endif (CGNS_ENABLE_PARALLEL)
 endif (CGNS_ENABLE_HDF5)
 
 ################################
-# create configed header files #
+# create configured header files #
 ################################
 
 if ("${SIZE_OF_LONG}" GREATER 4)
@@ -107,17 +103,25 @@ set(HAVE_FORTRAN_2008 0)
 set(HAVE_FORTRAN_2008TS 0)
 set(HDF5_HAVE_MULTI_DATASETS 0)
 set(HDF5_HAVE_COLL_METADATA 0)
+set(HDF5_HAVE_FILE_SPACE_STRATEGY 0)
 set(FORTRAN_DEFAULT_INTEGER_C_INT64_T 0)
 set(HAVE_STAT64_STRUCT 0)
 
 if (BUILDFORTRAN)
 
 #----------- Determine if the Fortran compiler pgi ------------------------
-# The PGI compiler segfaults wehn va_start is called, so we need to add
+# The PGI compiler segfaults when va_start is called, so we need to add
 # a special compiler flag, see CGNS-40.
 #--------------------------------------------------------------------------
-IF (CMAKE_C_COMPILER_ID MATCHES "PGI")
+IF (CMAKE_Fortran_COMPILER_ID MATCHES "PGI")
  SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -Mx,125,0x200")
+ENDIF()
+
+#----------- Determine if the Fortran compiler NAG ------------------------
+# The NAG compiler needs an additional flag for Fortran calls to C APIs.
+#--------------------------------------------------------------------------
+IF (CMAKE_Fortran_COMPILER_ID MATCHES "NAG")
+ SET(CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS} -mismatch_all")
 ENDIF()
 
 ENABLE_LANGUAGE(Fortran)
@@ -340,16 +344,12 @@ MACRO (CHECK_HDF5_FEATURE FUNCTION CODE VARIABLE)
         ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeTmp/test_HDF.c
         "${CODE}"
     )
-IF (HDF5_LIBRARIES)
-    SET (CHECK_FUNCTION_EXISTS_ADD_LIBRARIES "-DLINK_LIBRARIES:STRING=${HDF5_LIBRARIES}")
-ELSE (HDF5_LIBRARIES)
-    SET (CHECK_FUNCTION_EXISTS_ADD_LIBRARIES)
-ENDIF (HDF5_LIBRARIES)
 SET (CHECK_FUNCTION_EXISTS_ADD_INCLUDE "-DINCLUDE_DIRECTORIES:STRING=${HDF5_INCLUDE_DIR}")
     TRY_COMPILE (${VARIABLE}
         ${CMAKE_BINARY_DIR}
         ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeTmp/test_HDF.c
-        CMAKE_FLAGS "${CHECK_FUNCTION_EXISTS_ADD_INCLUDE}" "${CHECK_FUNCTION_EXISTS_ADD_LIBRARIES}"
+        LINK_LIBRARIES ${HDF5_LIBRARY}
+        CMAKE_FLAGS "${CHECK_FUNCTION_EXISTS_ADD_INCLUDE}"
         OUTPUT_VARIABLE OUTPUT
     )
 
@@ -451,6 +451,24 @@ CHECK_HDF5_FEATURE(Collective_metadata
    set(HDF5_HAVE_COLL_METADATA 1)
  endif (CHECK_HDF5_HAVE_COLL_METADATA)
 
+ # Check if HDF5 library has H5Pset_file_space_strategy, HDF5 >= 1.10.1
+ # --------------------------------------------------------------------
+
+CHECK_HDF5_FEATURE(H5Pset_file_space_strategy
+  " 
+ #include \"hdf5.h\"
+ void main(void)
+ {
+   hid_t foo;
+   H5Pset_file_space_strategy(foo, H5F_FSPACE_STRATEGY_FSM_AGGR, 1, (hsize_t)1);
+   return;
+ }
+  "
+   CHECK_HDF5_HAVE_FILE_SPACE_STRATEGY
+ )
+ if (CHECK_HDF5_HAVE_FILE_SPACE_STRATEGY)
+   set(HDF5_HAVE_FILE_SPACE_STRATEGY 1)
+ endif (CHECK_HDF5_HAVE_FILE_SPACE_STRATEGY)
 
 endif (CGNS_ENABLE_HDF5)
 
@@ -484,7 +502,7 @@ configure_file( ${CMAKE_CURRENT_SOURCE_DIR}/cgnsconfig.h.in
 configure_file( ${CMAKE_CURRENT_SOURCE_DIR}/cgnsBuild.defs.in
 		${CMAKE_CURRENT_BINARY_DIR}/cgnsBuild.defs )
 
-include_directories(${CMAKE_CURRENT_BINARY_DIR})
+include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR})
 
 ###########
 # Library #
@@ -540,11 +558,14 @@ endif (CGNS_ENABLE_FORTRAN)
 # Needed to work around a CMake > 3.8 bug on Windows with MSVS and Intel Fortran
 set_property(TARGET cgns_static PROPERTY LINKER_LANGUAGE C)
 
-
 # Build a shared version of the library
 if(CGNS_BUILD_SHARED)
   mark_as_advanced(CLEAR CGNS_USE_SHARED)
-  add_library(cgns_shared SHARED ${cgns_FILES})
+  if (CGNS_ENABLE_FORTRAN)
+    add_library(cgns_shared SHARED ${cgns_FILES} cgns_f.F90)
+  else (CGNS_ENABLE_FORTRAN)
+    add_library(cgns_shared SHARED ${cgns_FILES})
+  endif (CGNS_ENABLE_FORTRAN)
   # under windows we need to define BUILD_DLL
   # and link with the HDF5 libraries to build a dll
   if (WIN32 OR CYGWIN)
@@ -654,6 +675,7 @@ if (CGNS_ENABLE_TESTS)
   add_subdirectory(Test_UserGuideCode/C_code)
   if (CGNS_ENABLE_PARALLEL)
     add_subdirectory(ptests)
+    add_subdirectory(Test_UserGuideCode/C_code_parallel)
   endif (CGNS_ENABLE_PARALLEL)
 endif (CGNS_ENABLE_TESTS)
 

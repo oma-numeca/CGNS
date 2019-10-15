@@ -33,12 +33,15 @@ freely, subject to the following restrictions:
 #ifdef MEM_DEBUG
 #include "cg_malloc.h"
 #endif
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
 #include "adfh/ADFH.h"
 #include "hdf5.h"
 #endif
 
 #define CGNS_NAN(x)  (!((x) < HUGE_VAL && (x) > -HUGE_VAL))
+
+/* Flag for contiguous (0) or compact storage (1) */
+extern int HDF5storage_type;
 
 /***********************************************************************
  * global variable definitions
@@ -89,8 +92,8 @@ int cgi_read()
     double *id;
 
      /* get number of CGNSBase_t nodes and their ID */
-
     if (cgi_get_nodes(cg->rootid, "CGNSBase_t", &cg->nbases, &id)) return CG_ERROR;
+
     if (cg->nbases==0) return CG_OK;
     cg->base = CGNS_NEW(cgns_base,cg->nbases);
     for (b=0; b<cg->nbases; b++) cg->base[b].id = id[b];
@@ -383,7 +386,7 @@ int cgi_read_zone(cgns_zone *zone)
         for (n = 0; n < zone->nfamname; n++) {
             zone->famname[n].id = id[n];
             if (cgi_read_string(id[n], zone->famname[n].name, &fam)) return CG_ERROR;
-            strncpy(zone->famname[n].family, fam, (20*33)-1);
+            strncpy(zone->famname[n].family, fam, (CG_MAX_GOTO_DEPTH*(CGIO_MAX_NAME_LENGTH+1)));
             CGNS_FREE(fam);
         }
         CGNS_FREE(id);
@@ -472,7 +475,7 @@ int cgi_read_family(cgns_family *family) /* ** FAMILY TREE ** */
         for (n = 0; n < family->nfamname; n++) {
             family->famname[n].id = id[n];
             if (cgi_read_string(id[n], family->famname[n].name, &fam)) return CG_ERROR;
-            strncpy(family->famname[n].family, fam,(20*33)-1);
+            strncpy(family->famname[n].family, fam,(CG_MAX_GOTO_DEPTH*(CGIO_MAX_NAME_LENGTH+1)));
             CGNS_FREE(fam);
         }
         CGNS_FREE(id);
@@ -753,7 +756,9 @@ int cgi_read_family_name(int in_link, double parent_id, char_33 parent_name,
 
          /* FamilyName in data field of the ADF node */
             if (cgi_read_string(id[0], NodeName, &FamilyName)) return CG_ERROR;
-            if (strlen(FamilyName) > (20*33)-1) FamilyName[(20*33)-1]='\0'; /* ** FAMILY TREE ** */
+            if (strlen(FamilyName) > (CG_MAX_GOTO_DEPTH*(CGIO_MAX_NAME_LENGTH+1))) {
+                FamilyName[(CG_MAX_GOTO_DEPTH*(CGIO_MAX_NAME_LENGTH+1))]='\0'; /* ** FAMILY TREE ** */
+            }
             strcpy(family_name, FamilyName);
             if (FamilyName) CGNS_FREE(FamilyName);
 
@@ -1721,7 +1726,7 @@ int cgi_read_1to1(cgns_1to1 *one21)
         return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
     /*
      * Convert the double id to a hid_t id and compare that to 0 instead of
@@ -1898,7 +1903,7 @@ int cgi_read_conn(cgns_conn *conn)
         return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
       hid_t hid;
       to_HDF_ID(conn->ptset.id, hid);
@@ -2478,7 +2483,7 @@ int cgi_read_boco(cgns_boco *boco)
         for (n = 0; n < boco->nfamname; n++) {
             boco->famname[n].id = id[n];
             if (cgi_read_string(id[n], boco->famname[n].name, &fam)) return CG_ERROR;
-            strncpy(boco->famname[n].family, fam, (20*33)-1);
+            strncpy(boco->famname[n].family, fam, (CG_MAX_GOTO_DEPTH*(CGIO_MAX_NAME_LENGTH+1)));
             CGNS_FREE(fam);
         }
         CGNS_FREE(id);
@@ -3126,7 +3131,8 @@ int cgi_read_ptset(double parent_id, cgns_ptset *ptset)
      /* size_of_patch */
     if (ptset->type == CGNS_ENUMV(PointList) ||
         ptset->type == CGNS_ENUMV(ElementList) ||
-        ptset->type == CGNS_ENUMV(PointListDonor)) {
+        ptset->type == CGNS_ENUMV(PointListDonor) ||
+        ptset->type == CGNS_ENUMV(CellListDonor)) {
         ptset->size_of_patch = ptset->npts;
     }
     else {
@@ -5106,7 +5112,7 @@ int cgi_read_user_data(int in_link, double parent_id, int *nuser_data,
                 user_data[0][n].famname[i].id = idi[i];
                 if (cgi_read_string(idi[i], user_data[0][n].famname[i].name,
                         &fam)) return CG_ERROR;
-                strncpy(user_data[0][n].famname[i].family, fam, (20*33)-1);
+                strncpy(user_data[0][n].famname[i].family, fam, (CG_MAX_GOTO_DEPTH*33));
                 CGNS_FREE(fam);
             }
             CGNS_FREE(idi);
@@ -6073,14 +6079,15 @@ int cgi_write_family(double parent_id, cgns_family *family) /* ** FAMILY TREE **
                 fambc->link, &fambc->id)) return CG_ERROR;
         }
         else {
+	    int i;
             dim_vals = (cgsize_t)strlen(BCTypeName[fambc->type]);
             if (cgi_new_node(family->id, fambc->name, "FamilyBC_t",
                 &fambc->id, "C1", 1, &dim_vals, BCTypeName[fambc->type]))
                 return CG_ERROR;
              /* FamilyBCDataSet_t */
-            for (n=0; n < fambc->ndataset; n++)
+            for (i=0; i < fambc->ndataset; i++)
                 if (cgi_write_dataset(fambc->id, "FamilyBCDataSet_t",
-                    &fambc->dataset[n])) return CG_ERROR;
+                    &fambc->dataset[i])) return CG_ERROR;
         }
     }
 
@@ -6138,7 +6145,7 @@ int cgi_write_family(double parent_id, cgns_family *family) /* ** FAMILY TREE **
 
     /* ** FAMILY TREE ** */
     for( n = 0; n < family->nfamilies; n++ ) {
-    	if (cgi_write_family(family->id, &family->family[n])) return CG_ERROR;
+        if (cgi_write_family(family->id, &family->family[n])) return CG_ERROR;
     }
 
     return CG_OK;
@@ -6149,6 +6156,8 @@ int cgi_write_section(double parent_id, cgns_section *section)
     int n, data[2];
     cgsize_t dim_vals;
     double dummy_id;
+
+    HDF5storage_type = CG_CONTIGUOUS;
 
     if (section->link) {
         return cgi_write_link(parent_id, section->name,
@@ -6188,6 +6197,7 @@ int cgi_write_section(double parent_id, cgns_section *section)
     for (n=0; n<section->nuser_data; n++)
         if (cgi_write_user_data(section->id, &section->user_data[n])) return CG_ERROR;
 
+    HDF5storage_type = CG_COMPACT;
     return CG_OK;
 }
 
@@ -6368,6 +6378,8 @@ int cgi_write_conns(double parent_id, cgns_conn *conn)
     double dummy_id;
     cgns_ptset *ptset;
 
+    HDF5storage_type = CG_CONTIGUOUS;
+
     if (conn->link) {
         return cgi_write_link(parent_id, conn->name,
             conn->link, &conn->id);
@@ -6423,6 +6435,8 @@ int cgi_write_conns(double parent_id, cgns_conn *conn)
      /* UserDefinedData_t */
     for (n=0; n<conn->nuser_data; n++)
         if (cgi_write_user_data(conn->id, &conn->user_data[n])) return CG_ERROR;
+
+    HDF5storage_type = CG_COMPACT;
 
     return CG_OK;
 }
@@ -7529,6 +7543,8 @@ int cgi_write_array(double parent_id, cgns_array *array)
     cgsize_t dim_vals;
     double dummy_id;
 
+    HDF5storage_type = CG_CONTIGUOUS;
+
     if (array->link) {
         return cgi_write_link(parent_id, array->name,
             array->link, &array->id);
@@ -7568,6 +7584,8 @@ int cgi_write_array(double parent_id, cgns_array *array)
         if (cgi_new_node(array->id, "ArrayDataRange", "IndexRange_t",
                          &dummy_id, "I4", 1, &dim_vals, array->range))
             return CG_ERROR;
+
+    HDF5storage_type = CG_COMPACT;
 
     return CG_OK;
 }
@@ -7848,11 +7866,16 @@ int cgi_new_node(double parent_id, char const *name, char const *label,
  * using ADF_Write_Data(..).
 */
 int cgi_new_node_partial(double parent_id, char const *name, char const *label,
-                         double *node_id, char const *data_type, int ndim,
-                         cgsize_t const *dim_vals, cgsize_t const *rmin,
-                         cgsize_t const *rmax, void const *data)
+                         double *node_id, char const *data_type,
+                         int numdim, cgsize_t const *dims,
+                         cgsize_t const *s_start, cgsize_t const *s_end,
+                         int m_numdim, cgsize_t const *m_dims,
+                         cgsize_t const *m_start, cgsize_t const *m_end,
+                         void const *data)
 {
-    cgsize_t i, m_start[12], m_end[12], m_dim[12], stride[12];
+    cgsize_t i;
+     /* stride used for both file and memory */
+    cgsize_t stride[CGIO_MAX_DIMENSIONS];
 
      /* verify input */
     if (cgi_check_strlen(name) || cgi_check_strlen(label) ||
@@ -7870,15 +7893,7 @@ int cgi_new_node_partial(double parent_id, char const *name, char const *label,
      /* return if empty */
     if (strcmp(data_type, "MT")==0) return CG_OK;
 
-    for (i = 0; i < ndim; ++i)
-    {
-        m_start[i] = 1;
-        m_end[i] = rmax[i] - rmin[i] + 1;
-        m_dim[i] = m_end[i];
-        stride[i] = 1;
-    }
-
-    if (cgio_set_dimensions(cg->cgio, *node_id, data_type, ndim, dim_vals)) {
+    if (cgio_set_dimensions(cg->cgio, *node_id, data_type, numdim, dims)) {
          cg_io_error("cgio_set_dimensions");
          return CG_ERROR;
     }
@@ -7891,8 +7906,8 @@ int cgi_new_node_partial(double parent_id, char const *name, char const *label,
         strcmp(data_type,"R4")==0 || strcmp(data_type,"R8")==0) {
         cgsize_t ndata = 1, nbad=0;
 
-        for (i=0; i<ndim; i++)
-            ndata *= rmax[i] - rmin[i] + 1;
+        for (i=0; i<numdim; i++)
+            ndata *= s_end[i] - s_start[i] + 1;
 
         if (strcmp(data_type,"I4")==0) {
             for (i=0; i<ndata; i++) if (CGNS_NAN(*((int *)data+i))) nbad++;
@@ -7910,9 +7925,13 @@ int cgi_new_node_partial(double parent_id, char const *name, char const *label,
     }
 #endif
 
+    for (i = 0; i < CGIO_MAX_DIMENSIONS; ++i) {
+        stride[i] = 1;
+    }
+
      /* Write the data to disk */
-    if (cgio_write_data(cg->cgio, *node_id, rmin, rmax, stride,
-            ndim, m_dim, m_start, m_end, stride, data)) {
+    if (cgio_write_data(cg->cgio, *node_id, s_start, s_end, stride,
+            m_numdim, m_dims, m_start, m_end, stride, data)) {
         cg_io_error("cgio_write_data");
         return CG_ERROR;
     }
@@ -7943,6 +7962,478 @@ int cgi_delete_node (double parent_id, double node_id)
         cg_io_error ("cgio_delete_node");
         return CG_ERROR;
     }
+    return CG_OK;
+}
+
+/***********************************************************************\
+ *              General array reading and writing                      *
+\***********************************************************************/
+
+int cgi_array_general_verify_range(
+    const cgi_rw op_rw,                 /* [I] CGI_Read or CGI_Write */
+    const void* rind_index,             /* [I] how to index rind planes */
+    const int* rind_planes,             /* [I] sizes of rind planes */
+    const int s_numdim,                 /* [I] rank in file */
+    const cgsize_t *s_dimvals,          /* [I] dimensions of array in memory */
+    const cgsize_t *rmin,               /* [I] range min in file */
+    const cgsize_t *rmax,               /* [I] range max in file */
+    const int m_numdim,                 /* [I] rank in memory */
+    const cgsize_t *m_dimvals,          /* [I] dimensions of array in memory */
+    const cgsize_t *m_rmin,             /* [I] range min in memory */
+    const cgsize_t *m_rmax,             /* [I] range max in memory */
+    cgsize_t *s_rmin,                   /* [O] internal range min in file */
+    cgsize_t *s_rmax,                   /* [O] internal range max in file */
+    cgsize_t *stride,                   /* [O] stride (always 1) */
+    int *s_access_full_range,           /* [O] T: access all of file array */
+    int *m_access_full_range,           /* [O] T: access all of memory array */
+    cgsize_t *numpt)                    /* [O] number of points accessed */
+{
+    cgsize_t s_numpt = 1, m_numpt = 1;
+    cgsize_t npt;
+    int n;
+
+    int s_reset_range = 1;
+    *s_access_full_range = 1;
+    *m_access_full_range = 1;
+
+     /*** verification for dataset in file */
+     /* verify that range requested is not NULL */
+    if (rmin == NULL || rmax == NULL) {
+        cgi_error("NULL range value");
+        return CG_ERROR;
+    }
+
+     /* check if requested to return full range */
+    for (n=0; n<s_numdim; n++) {
+        npt = rmax[n] - rmin[n] + 1;
+        s_numpt *= npt;
+        if (npt != s_dimvals[n]) {
+            *s_access_full_range = 0;
+            s_reset_range = 0;
+        }
+    }
+
+     /* s_reset_range allows the user to specify any range if it fully
+        spans the dimension of the file-space range (i.e., they can ignore the
+        indexing of rind and core cells).  But this is disabled for writing. */
+    if (op_rw == CGI_Write) {
+        s_reset_range = 0;
+    }
+
+     /* verify that range requested does not exceed range stored (if not
+      * reading full range). */
+    if (!(s_reset_range)) {
+        for (n=0; n<s_numdim; n++) {
+            if (rind_index == CG_CONFIG_RIND_ZERO || rind_planes == NULL) {
+                /* old obsolete behavior (versions < 3.4) */
+                if (rmin[n] > rmax[n] ||
+                    rmax[n] > s_dimvals[n] ||
+                    rmin[n] < 1) {
+                    cgi_error("Invalid range of data requested");
+                    return CG_ERROR;
+                }
+            }
+            else {
+                /* new behavior consistent with SIDS */
+                if (rmin[n] > rmax[n] ||
+                    rmax[n] > (s_dimvals[n] - rind_planes[2*n]) ||
+                    rmin[n] < (1 - rind_planes[2*n])) {
+                    cgi_error("Invalid range of data requested");
+                    return CG_ERROR;
+                }
+            }
+        }
+    }
+
+     /*** verification for dataset in memory */
+     /* verify the rank and dimensions of the memory array */
+    if (m_numdim <= 0 || m_numdim > CGIO_MAX_DIMENSIONS) {
+        cgi_error("Invalid number of dimensions in memory array");
+        return CG_ERROR;
+    }
+
+    if (m_dimvals == NULL) {
+        cgi_error("NULL dimension value");
+        return CG_ERROR;
+    }
+
+    for (n=0; n<m_numdim; n++) {
+        if (m_dimvals[n] < 1) {
+            cgi_error("Invalid size of dimension in memory array");
+            return CG_ERROR;
+        }
+    }
+
+     /* verify that range requested is not NULL */
+    if (m_rmin == NULL || m_rmax == NULL) {
+        cgi_error("NULL range value");
+        return CG_ERROR;
+    }
+
+     /* verify that range requested does not exceed range available */
+    for (n=0; n<m_numdim; n++) {
+        if (m_rmin[n] > m_rmax[n] ||
+            m_rmax[n] > m_dimvals[n] ||
+            m_rmin[n] < 1) {
+            cgi_error("Invalid range of memory array provided");
+            return CG_ERROR;
+        }
+    }
+
+     /* check if requested to return full range */
+    for (n=0; n<m_numdim; n++) {
+        npt = m_rmax[n] - m_rmin[n] + 1;
+        m_numpt *= npt;
+        if (npt != m_dimvals[n]) {
+            *m_access_full_range = 0;
+        }
+    }
+
+     /* both the file hyperslab and memory hyperslab must have same number of
+      * points */
+    if (s_numpt != m_numpt) {
+        cgi_error("Number of locations in range of memory array (%d) do not "
+                  "match number of locations requested in range of file (%d)",
+                  m_numpt, s_numpt);
+        return CG_ERROR;
+    }
+    *numpt = s_numpt;
+
+     /* set s_rmin and s_rmax to file-space ranges used internally (the lower
+        bound of the arrays is 1 whereas from the user perspective, the lower
+        core cells have index 1) */
+     /* note: s_rmin and s_rmax are not used if reading full range in serial */
+    if (s_reset_range) {
+         /* reset range and discard provided values */
+        for (n = 0; n<s_numdim; n++) {
+            s_rmin[n] = 1;
+            s_rmax[n] = s_dimvals[n];
+        }
+    }
+    else {
+        for (n = 0; n<s_numdim; n++) {
+            if (rind_index == CG_CONFIG_RIND_ZERO || rind_planes == NULL) {
+                 /* old obsolete behavior (versions < 3.4) */
+                s_rmin[n] = rmin[n];
+                s_rmax[n] = rmax[n];
+            }
+            else {
+                 /* new behavior consistent with SIDS */
+                 /* convert to have first rind at index 1 */
+                s_rmin[n] = rmin[n] + rind_planes[2*n];
+                s_rmax[n] = rmax[n] + rind_planes[2*n];
+            }
+        }
+    }
+
+     /* strides are all unit */
+    for (n = 0; n<CGIO_MAX_DIMENSIONS; n++) {
+        stride[n] = 1;
+    }
+
+    return CG_OK;
+}
+
+/* s_ prefix is file space, m_ prefix is memory space */
+int cgi_array_general_read(
+    const cgns_array *array,            /* [I] array to read */
+    const void* rind_index,             /* [I] how to index rind planes */
+    const int* rind_planes,             /* [I] sizes of rind planes */
+    const int s_numdim,                 /* [I] rank in file */
+    const cgsize_t *rmin,               /* [I] range min in file */
+    const cgsize_t *rmax,               /* [I] range max in file */
+    CGNS_ENUMT(DataType_t) m_type,      /* [I] data type in memory */
+    const int m_numdim,                 /* [I] rank in memory */
+    const cgsize_t *m_dimvals,          /* [I] dimensions of array in memory */
+    const cgsize_t *m_rmin,             /* [I] range min in memory */
+    const cgsize_t *m_rmax,             /* [I] range max in memory */
+    void* data)                         /* [O] data to load */
+{
+    int s_access_full_range, m_access_full_range, ier;
+    cgsize_t numpt;
+
+    CGNS_ENUMT(DataType_t) s_type = cgi_datatype(array->data_type);
+    const cgsize_t *s_dimvals = array->dim_vals;
+
+     /* verify the ranges provided and set s_rmin and s_rmax giving internal
+        file-space ranges */
+    cgsize_t s_rmin[CGIO_MAX_DIMENSIONS], s_rmax[CGIO_MAX_DIMENSIONS];
+    cgsize_t stride[CGIO_MAX_DIMENSIONS];
+    ier = cgi_array_general_verify_range(
+        CGI_Read, rind_index, rind_planes,
+        s_numdim, s_dimvals,   rmin,   rmax,
+        m_numdim, m_dimvals, m_rmin, m_rmax,
+        s_rmin, s_rmax, stride, &s_access_full_range, &m_access_full_range,
+        &numpt);
+    if (ier != CG_OK) return ier;
+    const int access_full_range =
+        (s_access_full_range == 1) && (m_access_full_range == 1);
+
+    if (s_type == m_type) {
+         /* quick transfer of data if same data types */
+        if (access_full_range) {
+            if (cgio_read_all_data(cg->cgio, array->id, data)) {
+                cg_io_error("cgio_read_all_data");
+                return CG_ERROR;
+            }
+        }
+        else {
+            if (cgio_read_data(cg->cgio, array->id,
+                               s_rmin, s_rmax, stride, m_numdim, m_dimvals,
+                               m_rmin, m_rmax, stride, data)) {
+                cg_io_error("cgio_read_data");
+                return CG_ERROR;
+            }
+        }
+    }
+    else if (cg->filetype == CGIO_FILE_ADF2 || cg->filetype == CGIO_FILE_ADF) {
+         /* need to read into temp array to convert data */
+         /* only able to convert for full range in memory */
+        if (!m_access_full_range) {
+            cgi_error("Reading to partial range in memory with data conversion "
+                      "is not supported in ADF file format");
+            return CG_ERROR;
+        }
+        void *conv_data;
+        conv_data = malloc((size_t)(numpt*size_of(array->data_type)));
+        if (conv_data == NULL) {
+            cgi_error("Error allocating conv_data");
+            return CG_ERROR;
+        }
+        if (access_full_range) {
+            if (cgio_read_all_data(cg->cgio, array->id, conv_data)) {
+                free(conv_data);
+                cg_io_error("cgio_read_all_data");
+                return CG_ERROR;
+            }
+        }
+        else {
+            if (cgio_read_data(cg->cgio, array->id, s_rmin, s_rmax, stride,
+                               m_numdim, m_dimvals, m_rmin, m_rmax, stride,
+                               conv_data)) {
+                free(conv_data);
+                cg_io_error("cgio_read_data");
+               return CG_ERROR;
+            }
+        }
+        ier = cgi_convert_data(numpt, s_type, conv_data, m_type, data);
+        free(conv_data);
+        if (ier) return CG_ERROR;
+    }
+    else {
+         /* in-situ conversion */
+        if (access_full_range) {
+            if (cgio_read_all_data_type(cg->cgio, array->id,
+                                        cgi_adf_datatype(m_type), data)) {
+                cg_io_error("cgio_read_all_data_type");
+                return CG_ERROR;
+            }
+        }
+        else {
+            if (cgio_read_data_type(cg->cgio, array->id,
+                                    s_rmin, s_rmax, stride,
+                                    cgi_adf_datatype(m_type),
+                                    m_numdim, m_dimvals, m_rmin, m_rmax, stride,
+                                    data)) {
+                cg_io_error("cgio_read_data_type");
+                return CG_ERROR;
+            }
+        }
+    }
+    return CG_OK;
+}
+
+/* s_ prefix is file space, m_ prefix is memory space, p_ is parent node data */
+int cgi_array_general_write(
+    double p_id,                        /* [I] id of parent node */
+    int *p_narraylist,                  /* [I/O] number of arrays in parent */
+    cgns_array **p_arraylist,           /* [I/O] arrays in parent */
+    const char *const arrayname,        /* [I] name of array to write to */
+    const void* rind_index,             /* [I] how to index rind planes */
+    const int* rind_planes,             /* [I] sizes of rind planes */
+    CGNS_ENUMT(DataType_t) s_type,      /* [I] data type in file */
+    const int s_numdim,                 /* [I] rank in file */
+    const cgsize_t *s_dimvals,          /* [I] dimensions of array in file */
+    const cgsize_t *rmin,               /* [I] range min in file */
+    const cgsize_t *rmax,               /* [I] range max in file */
+    CGNS_ENUMT(DataType_t) m_type,      /* [I] data type in memory */
+    const int m_numdim,                 /* [I] rank in memory */
+    const cgsize_t *m_dimvals,          /* [I] dimensions of array in memory */
+    const cgsize_t *m_rmin,             /* [I] range min in memory */
+    const cgsize_t *m_rmax,             /* [I] range max in memory */
+    const void* data,                   /* [I] data to store */
+    int *A)                             /* [O] array index for new array */
+{
+    int s_access_full_range, m_access_full_range, n, idx, ier;
+    cgsize_t numpt;
+
+     /* verify the ranges provided and set s_rmin and s_rmax giving internal
+        file-space ranges */
+    cgsize_t s_rmin[CGIO_MAX_DIMENSIONS], s_rmax[CGIO_MAX_DIMENSIONS];
+    cgsize_t stride[CGIO_MAX_DIMENSIONS];
+    ier = cgi_array_general_verify_range(
+        CGI_Write, rind_index, rind_planes,
+        s_numdim, s_dimvals,   rmin,   rmax,
+        m_numdim, m_dimvals, m_rmin, m_rmax,
+        s_rmin, s_rmax, stride, &s_access_full_range, &m_access_full_range,
+        &numpt);
+    if (ier != CG_OK) return ier;
+    const int access_full_range =
+        (s_access_full_range == 1) && (m_access_full_range == 1);
+
+    cgns_array *array;
+
+     /* check for existing array */
+    int have_dup = 0;
+    if (p_narraylist == NULL) {  /* data array */
+        int ier = 0;
+         /* note: this will allocate a DataArray_t node if existing not found */
+        array = cgi_array_address(CG_MODE_WRITE, 1, 0, arrayname, &have_dup,
+                                  &ier);
+        if (array == 0) return ier;
+        if (cgi_posit_id(&p_id)) return CG_ERROR;
+    }
+    else {
+        for (idx=0; idx<(*p_narraylist); idx++) {
+            if (strcmp(arrayname, (*p_arraylist)[idx].name) == 0) {
+                have_dup = 1;
+                array = &((*p_arraylist)[idx]);
+                break;
+            }
+        }
+    }
+
+    if (have_dup) {
+         /* overwrite a DataArray_t node of same name, size and data-type: */
+         /* array rank in file must agree */
+        if (array->data_dim != s_numdim) {
+            cgi_error("Mismatch in array rank");
+            return CG_ERROR;
+        }
+         /* array dimensions in file must agree */
+        for (n = 0; n<s_numdim; n++) {
+            if (array->dim_vals[n] != s_dimvals[n]) {
+                cgi_error("Mismatch in array dimension %d", n);
+                return CG_ERROR;
+            }
+        }
+         /* data type in file must agree */
+        if (strcmp(array->data_type, cgi_adf_datatype(s_type))) {
+            cgi_error("Mismatch in data types");
+            return CG_ERROR;
+        }
+    }
+    else {
+         /* add a DataArray_t node if not already done */
+        if (p_narraylist) {
+            if (*p_narraylist == 0) {
+                *p_arraylist = CGNS_NEW(cgns_array, (*p_narraylist)+1);
+            } else {
+                *p_arraylist = CGNS_RENEW(cgns_array, (*p_narraylist)+1,
+                                          *p_arraylist);
+            }
+            array = &((*p_arraylist)[*p_narraylist]);
+            ++(*p_narraylist);
+            (*A) = *p_narraylist;
+        }
+
+         /* save array information in memory */
+        memset(array, 0, sizeof(cgns_array));
+        strcpy(array->data_type, cgi_adf_datatype(m_type));
+        strcpy(array->name, arrayname);
+        array->data_dim = s_numdim;
+        for (n = 0; n<s_numdim; n++) {
+            array->dim_vals[n] = s_dimvals[n];
+        }
+
+         /* save DataArray_t node on disk: */
+        if (cgi_new_node_partial(p_id, array->name, "DataArray_t", &array->id,
+                                 array->data_type,
+                                 s_numdim, s_dimvals, s_rmin, s_rmax,
+                                 m_numdim, m_dimvals, m_rmin, m_rmax, NULL)) {
+            return CG_ERROR;
+        }
+    }
+
+    /* Do not write the data if NULL pointer.  This is often used in parallel
+     * cgns where only the metadata is being written in serial */
+    if (data == NULL) return CG_OK;
+
+    if (s_type == m_type) {
+         /* quick transfer of data if same data types */
+        if (access_full_range) {
+            if (cgio_write_all_data(cg->cgio, array->id, data)) {
+                cg_io_error("cgio_write_all_data");
+                return CG_ERROR;
+            }
+        }
+        else {
+            if (cgio_write_data(cg->cgio, array->id, s_rmin, s_rmax, stride,
+                                m_numdim, m_dimvals, m_rmin, m_rmax, stride,
+                                data)) {
+                cg_io_error("cgio_write_data");
+                return CG_ERROR;
+            }
+        }
+    }
+    else if (cg->filetype == CGIO_FILE_ADF2 || cg->filetype == CGIO_FILE_ADF) {
+         /* need to write into temp array to convert data */
+         /* only able to convert for full range in memory */
+        if (!m_access_full_range) {
+            cgi_error("Writing from partial range in memory with data "
+                      "conversion is not supported in ADF file format");
+            return CG_ERROR;
+        }
+        void *conv_data;
+        conv_data = malloc((size_t)(numpt*size_of(array->data_type)));
+        if (conv_data == NULL) {
+            cgi_error("Error allocating conv_data");
+            return CG_ERROR;
+        }
+        if (cgi_convert_data(numpt, m_type, data, s_type, conv_data))
+          {
+              free(conv_data);
+              return CG_ERROR;
+          }
+        if (access_full_range) {
+            if (cgio_write_all_data(cg->cgio, array->id, conv_data)) {
+                free(conv_data);
+                cg_io_error("cgio_write_all_data");
+                return CG_ERROR;
+            }
+        }
+        else {
+            if (cgio_write_data(cg->cgio, array->id, s_rmin, s_rmax, stride,
+                                m_numdim, m_dimvals, m_rmin, m_rmax, stride,
+                                conv_data)) {
+                free(conv_data);
+                cg_io_error("cgio_write_data");
+                return CG_ERROR;
+            }
+        }
+        free(conv_data);
+    }
+    else {
+         /* in-situ conversion */
+        if (access_full_range) {
+            if (cgio_write_all_data_type(cg->cgio, array->id,
+                                        cgi_adf_datatype(m_type), data)) {
+                cg_io_error("cgio_write_all_data_type");
+                return CG_ERROR;
+            }
+        }
+        else {
+            if (cgio_write_data_type(cg->cgio, array->id,
+                                     s_rmin, s_rmax, stride,
+                                     cgi_adf_datatype(m_type),
+                                     m_numdim, m_dimvals, m_rmin, m_rmax,
+                                     stride, data)) {
+                cg_io_error("cgio_write_data_type");
+                return CG_ERROR;
+            }
+        }
+    }
+
     return CG_OK;
 }
 
@@ -8072,7 +8563,7 @@ char *type_of(char_33 data_type)
     }
 }
 
-int size_of(char_33 data_type)
+int size_of(const char_33 data_type)
 {
     if (strcmp(data_type, "I4") == 0) return sizeof(int);
     if (strcmp(data_type, "I8") == 0) return sizeof(cglong_t);
@@ -10092,7 +10583,7 @@ static int cgi_next_posit(char *label, int index, char *name)
     else if (0 == strcmp (posit->label, "FamilyBC_t")) {
         cgns_fambc *f = (cgns_fambc *)posit->posit;
         if (0 == strcmp (label, "FamilyBCDataSet_t") ||
-            /* backwards compatibily */
+            /* backwards compatibility */
             0 == strcmp (label, "BCDataSet_t")) {
             if (--index < 0) {
                 for (n = 0; n < f->ndataset; n++) {
@@ -10762,7 +11253,7 @@ cgns_descr *cgi_descr_address(int local_mode, int given_no,
                               char const *given_name, int *ier)
 {
     cgns_descr *descr=0;
-    int n, error1=0, error2=0;
+    int n, allow_dup=0, error1=0, error2=0;
     double parent_id=0;
 
     /* check for valid posit */
@@ -10961,7 +11452,7 @@ cgns_famname *cgi_multfam_address(int local_mode, int given_no,
                                   char const *given_name, int *ier)
 {
     cgns_famname *famname=0;
-    int n, error1=0, error2=0;
+    int n, allow_dup=0, error1=0, error2=0;
     double parent_id=0;
 
     if (posit == 0) {
@@ -11274,7 +11765,7 @@ int *cgi_rind_address(int local_mode, int *ier)
 {
     int *rind_planes=0, nnod;
     double parent_id=0, *id;
-    int error1=0, index_dim;
+    int error1, index_dim;
 
     /* check for valid posit */
     if (posit == 0) {
@@ -11314,6 +11805,7 @@ int *cgi_rind_address(int local_mode, int *ier)
     }
 
 /* Corrected on July 27 2001 by Diane Poirier
+    
     if (error1==1) {
         cgi_error("Rind_t already defined under %s",posit->label);
         (*ier) = CG_ERROR;
@@ -11481,7 +11973,7 @@ cgns_integral *cgi_integral_address(int local_mode, int given_no,
                                     char const *given_name, int *ier)
 {
     cgns_integral *integral=0;
-    int n, error1=0, error2=0;
+    int n, allow_dup=0, error1=0, error2=0;
     double parent_id=0;
 
     /* check for valid posit */
@@ -11772,8 +12264,8 @@ int *cgi_diffusion_address(int local_mode, int *ier)
     return diffusion_model;
 }
 
-cgns_array *cgi_array_address(int local_mode, int given_no,
-                              char const *given_name, int *ier)
+cgns_array *cgi_array_address(int local_mode, int allow_dup, int given_no,
+                              char const *given_name, int* have_dup, int *ier)
 {
     cgns_array *array=0, *coord=0;
     int n, error1=0, error2=0;
@@ -11986,10 +12478,13 @@ cgns_array *cgi_array_address(int local_mode, int given_no,
         return CG_OK;
     }
     if (error1) {
-        cgi_error("Duplicate child name found (%s) found under %s",
-            given_name, posit->label);
-        (*ier) = CG_ERROR;
-        return CG_OK;
+        *have_dup = 1;
+        if (!allow_dup) {
+            cgi_error("Duplicate child name found (%s) found under %s",
+                given_name, posit->label);
+            (*ier) = CG_ERROR;
+            return CG_OK;
+        }
     }
     if (error2) {
         cgi_error("DataArray_t index number %d doesn't exist under %s",
@@ -11997,7 +12492,7 @@ cgns_array *cgi_array_address(int local_mode, int given_no,
         (*ier) = CG_NODE_NOT_FOUND;
         return CG_OK;
     }
-    if (parent_id) {    /* parent_id!=0 only when overwriting */
+    if (parent_id && !allow_dup) {  /* parent_id!=0 only when overwriting */
         if (cgi_delete_node (parent_id, array->id)) {
             (*ier) = CG_ERROR;
             return CG_OK;
@@ -12107,7 +12602,7 @@ cgns_user_data *cgi_user_data_address(int local_mode, int given_no,
                                       char const *given_name, int *ier)
 {
     cgns_user_data *user_data=0;
-    int n, error1=0, error2=0;
+    int n, allow_dup=0, error1=0, error2=0;
     double parent_id=0;
 
     /* check for valid posit */
@@ -12245,7 +12740,7 @@ cgns_family *cgi_family_address(int local_mode, int given_no,
                                 char const *given_name, int *ier)
 {
     cgns_family *family=0;
-    int n, error1=0, error2=0;
+    int n, allow_dup=0, error1=0, error2=0;
     double parent_id=0;
 
     /* check for valid posit */
@@ -12341,7 +12836,7 @@ cgns_dataset *cgi_bcdataset_address(int local_mode, int given_no,
                                     char const *given_name, int *ier)
 {
     cgns_dataset *dataset=0;
-    int n, error1=0, error2=0;
+    int n, allow_dup=0, error1=0, error2=0;
     double parent_id=0;
 
     /* check for valid posit */
@@ -12686,9 +13181,9 @@ void cgi_free_family(cgns_family *family) /* ** FAMILY TREE ** */
 
     /* FAMILY TREE : Free Family_t nodes */
     if ( family->nfamilies ) {
-    	for( n = 0; n < family->nfamilies; n++ )
-    		cgi_free_family( &family->family[n] );
-    	CGNS_FREE( family->family );
+        for( n = 0; n < family->nfamilies; n++ )
+            cgi_free_family( &family->family[n] );
+        CGNS_FREE( family->family );
     }
 
     if (family->nuser_data) {

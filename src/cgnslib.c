@@ -53,7 +53,7 @@ freely, subject to the following restrictions:
 #include "cgns_io.h"
 
 /* to determine default file type */
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
 # include "hdf5.h"
 #endif
 
@@ -96,6 +96,10 @@ int posit_file, posit_base, posit_zone;
 int CGNSLibVersion=CGNS_VERSION;/* Version of the CGNSLibrary*1000  */
 int cgns_compress = 0;
 int cgns_filetype = CG_FILE_NONE;
+void* cgns_rindindex = CG_CONFIG_RIND_CORE;
+
+/* Flag for contiguous (0) or compact storage (1) */
+int HDF5storage_type = CG_COMPACT;
 
 extern void (*cgns_error_handler)(int, char *);
 
@@ -290,15 +294,15 @@ void objlist_status(char *tag)
     {
       if (H5Iis_valid(idlist[n]))
       {
-      	printf("{%s} track %d INVALID\n",tag,idlist[n]);
+        printf("{%s} track %d INVALID\n",tag,idlist[n]);
       }
       else
       {
-          H5Oget_info(idlist[n],&objinfo);
-          memset(oname,'\0',256);
-          sname=H5Iget_name(idlist[n],oname,0);
-          sname=H5Iget_name(idlist[n],oname,sname+1);
-          printf("{%s} track %d ALIVE (%s:%d)\n",tag,idlist[n],oname,objinfo.rc);
+        H5Oget_info(idlist[n],&objinfo);
+        memset(oname,'\0',256);
+        sname=H5Iget_name(idlist[n],oname,0);
+        sname=H5Iget_name(idlist[n],oname,sname+1);
+        printf("{%s} track %d ALIVE (%s:%d)\n",tag,idlist[n],oname,objinfo.rc);
       }
     }
   }
@@ -340,7 +344,7 @@ int cg_open(const char *filename, int mode, int *file_number)
 
 #ifdef __CG_MALLOC_H__
     fprintf(stderr, "CGNS MEM_DEBUG: before open:files %d/%d: memory %d/%d: calls %d/%d\n", n_open,
-        cgns_file_size, cgmemnow(), cgmemmax(), cgalloccalls(), cgfreecalls());
+           cgns_file_size, cgmemnow(), cgmemmax(), cgalloccalls(), cgfreecalls());
 #endif
 
     /* check file mode */
@@ -533,7 +537,7 @@ int cg_version(int file_number, float *FileVersion)
         return CG_ERROR;
     } else {
         int vers, ndim, temp_version;
-    cgsize_t dim_vals[12];
+        cgsize_t dim_vals[12];
         char_33 node_name;
         char_33 data_type;
         void *data;
@@ -619,7 +623,7 @@ int cg_close(int file_number)
 
 #ifdef __CG_MALLOC_H__
     fprintf(stderr, "CGNS MEM_DEBUG: before close:files %d/%d: memory %d/%d: calls %d/%d\n", n_open,
-        cgns_file_size, cgmemnow(), cgmemmax(), cgalloccalls(), cgfreecalls());
+           cgns_file_size, cgmemnow(), cgmemmax(), cgalloccalls(), cgfreecalls());
 #endif
 
     if (cgns_compress && cg->mode == CG_MODE_MODIFY &&
@@ -654,7 +658,7 @@ int cg_close(int file_number)
 
 #ifdef __CG_MALLOC_H__
     fprintf(stderr, "CGNS MEM_DEBUG: after  close:files %d/%d: memory %d/%d: calls %d/%d\n", n_open,
-        cgns_file_size, cgmemnow(), cgmemmax(), cgalloccalls(), cgfreecalls());
+           cgns_file_size, cgmemnow(), cgmemmax(), cgalloccalls(), cgfreecalls());
 #endif
 
 #ifdef DEBUG_HDF5_OBJECTS_CLOSE
@@ -696,15 +700,15 @@ int cg_set_file_type(int file_type)
 {
     if (file_type == CG_FILE_NONE) {
         char *type = getenv("CGNS_FILETYPE");
-    if (type == NULL || !*type) {
-#if defined(BUILD_HDF5)
+        if (type == NULL || !*type) {
+#if CG_BUILD_HDF5
             cgns_filetype = CG_FILE_HDF5;
 #else
             cgns_filetype = CG_FILE_ADF;
 #endif
         }
-#ifdef BUILD_HDF5
-    else if (*type == '2' || *type == 'h' || *type == 'H') {
+#if CG_BUILD_HDF5
+        else if (*type == '2' || *type == 'h' || *type == 'H') {
             cgns_filetype = CG_FILE_HDF5;
         }
 #endif
@@ -716,7 +720,7 @@ int cg_set_file_type(int file_type)
 #else
             cgns_filetype = CG_FILE_ADF2;
 #endif
-    }
+        }
         else
             cgns_filetype = CG_FILE_ADF;
     }
@@ -790,6 +794,15 @@ int cg_configure(int what, void *value)
     /* default file type */
     else if (what == CG_CONFIG_FILE_TYPE) {
         return cg_set_file_type((int)((size_t)value));
+    }
+    /* allow pre v3.4 rind-plane indexing */
+    else if (what == CG_CONFIG_RIND_INDEX) {
+        if (value != CG_CONFIG_RIND_ZERO &&
+            value != CG_CONFIG_RIND_CORE) {
+            cgi_error("unknown config setting");
+            return CG_ERROR;
+        }
+        cgns_rindindex = value;
     }
     else {
         cgi_error("unknown config setting");
@@ -1016,7 +1029,7 @@ int cg_cell_dim(int file_number, int B, int *cell_dim)
 }
 
 int cg_base_write(int file_number, const char * basename, int cell_dim,
-          int phys_dim, int *B)
+                 int phys_dim, int *B)
 {
     cgns_base *base = NULL;
     int index;
@@ -1318,7 +1331,7 @@ int cg_family_write(int file_number, int B, const char * family_name, int *F)
     cgns_base   *base;
     cgns_family *family = NULL;
 
-    char family_name_path[33*20];
+    char family_name_path[(CGIO_MAX_NAME_LENGTH+1)*CG_MAX_GOTO_DEPTH+1];
     char *pch, *tok;
     int   skip = 0;
 
@@ -1329,9 +1342,12 @@ int cg_family_write(int file_number, int B, const char * family_name, int *F)
     if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_WRITE)) return CG_ERROR;
 
     /* Check family name validity */
-    if( strlen( family_name ) == 0 )
-    {
+    if ( strlen( family_name ) == 0 ){
         cgi_error( "Family name is empty" );
+        return CG_ERROR;
+    }
+    if ( strlen( family_name ) > (CGIO_MAX_NAME_LENGTH+1)*CG_MAX_GOTO_DEPTH ){
+        cgi_error( "Family name is too long" );
         return CG_ERROR;
     }
 
@@ -1408,14 +1424,14 @@ int cg_family_write(int file_number, int B, const char * family_name, int *F)
                     }
                     /* Save the old in-memory address to overwrite */
                     family = &( (*family_p)[index] );
-                    // free memory
+                    /* free memory */
                     cgi_free_family(family);
                     break; /* quit "for" loop */
 
                 }
                 /* else, progressing in family tree path */
                 else {
-                    family = &( (*family_p)[index] ); // ??
+                    family = &( (*family_p)[index] ); /* ?? */
                     skip = 1; /* intermediate node exists and should not be created or overwritten */
                     break;
                 }
@@ -1423,7 +1439,7 @@ int cg_family_write(int file_number, int B, const char * family_name, int *F)
             }
         }
 
-        // ... or add a Family_t Node
+        /* ... or add a Family_t Node */
         if( index == *nfamilies_p ) {
             if( *nfamilies_p == 0 ) {
                 *family_p = CGNS_NEW( cgns_family, (*nfamilies_p)+1 );
@@ -1504,10 +1520,9 @@ int cg_family_name_write(int file_number, int B, int F,
     cgns_famname *famname = 0;
 
      /* verify input */
-    if (cgi_check_strlen(name) /*||
-        cgi_check_strlen(family)*/) return CG_ERROR;
+    if (cgi_check_strlen(name)) return CG_ERROR;
 
-    if ( strlen(family) > 33*20 ) {
+    if ( strlen(family) > (CGIO_MAX_NAME_LENGTH+1)*CG_MAX_GOTO_DEPTH ) {
         cgi_error( "Family path too long (%s, size %ld)", family, strlen(family) );
         return CG_ERROR;
     }
@@ -1677,14 +1692,13 @@ int cg_node_family_name_write( const char* node_name, const char* family_name )
     int index;
     cgns_family*  family  = 0;
     cgns_famname* famname = 0;
-    double posit_id;
     cgsize_t dim;
     CHECK_FILE_OPEN
 
     /* verify input */
     if( cgi_check_strlen( node_name ))   return CG_ERROR;
 
-    if ( strlen(family_name) > 33*20 ) {
+    if ( strlen(family_name) > (CGIO_MAX_NAME_LENGTH+1)*CG_MAX_GOTO_DEPTH ) {
         cgi_error( "Family path too long (%s, size %ld)", family_name, strlen(family_name) );
         return CG_ERROR;
     }
@@ -1922,9 +1936,9 @@ int cg_node_fambc_write( const char* fambc_name,
     cgsize_t length;
     cgns_family *family = 0;
     cgns_fambc *fambc = NULL;
-//
-//     /* verify input */
-//    if (cgi_check_strlen(fambc_name)) return CG_ERROR;
+
+    /* verify input */
+/*  if (cgi_check_strlen(fambc_name)) return CG_ERROR; */
     if (INVALID_ENUM(bocotype,NofValidBCTypes)) {
         cgi_error("Invalid BCType:  %d",bocotype);
         return CG_ERROR;
@@ -2847,39 +2861,73 @@ int cg_coord_info(int file_number, int B, int Z, int C, CGNS_ENUMT(DataType_t)  
     return CG_OK;
 }
 
-int cg_coord_read(int file_number, int B, int Z, const char * coordname,
-                  CGNS_ENUMT(DataType_t) type, const cgsize_t * rmin,
-                  const cgsize_t * rmax, void *coord_ptr)
+int cg_coord_read(int file_number, int B, int Z, const char *coordname,
+                  CGNS_ENUMT(DataType_t) type, const cgsize_t *s_rmin,
+                  const cgsize_t *s_rmax, void *coord_ptr)
 {
+    cgns_zone *zone;
+    int n, m_numdim;
+
+     /* get memory addresses */
+    cg = cgi_get_file(file_number);
+    if (cg == 0) return CG_ERROR;
+
+    zone = cgi_get_zone(cg, B, Z);
+    if (zone == 0) return CG_ERROR;
+
+    m_numdim = zone->index_dim;
+
+    /* verify that range requested is not NULL */
+    if (s_rmin == NULL || s_rmax == NULL) {
+        cgi_error("NULL range value.");
+        return CG_ERROR;
+    }
+
+    cgsize_t m_dimvals[CGIO_MAX_DIMENSIONS];
+    cgsize_t m_rmin[CGIO_MAX_DIMENSIONS], m_rmax[CGIO_MAX_DIMENSIONS];
+    for (n = 0; n<m_numdim; n++) {
+        m_rmin[n] = 1;
+        m_rmax[n] = s_rmax[n] - s_rmin[n] + 1;
+        m_dimvals[n] = m_rmax[n];
+    }
+
+    return cg_coord_general_read(file_number, B, Z, coordname,
+                                 s_rmin, s_rmax, type,
+                                 m_numdim, m_dimvals, m_rmin, m_rmax,
+                                 coord_ptr);
+}
+
+int cg_coord_general_read(int fn, int B, int Z, const char *coordname,
+                          const cgsize_t *s_rmin, const cgsize_t *s_rmax,
+                          CGNS_ENUMT(DataType_t) m_type,
+                          int m_numdim, const cgsize_t *m_dimvals,
+                          const cgsize_t *m_rmin, const cgsize_t *m_rmax,
+                          void *coord_ptr)
+{
+     /* s_ prefix is file space, m_ prefix is memory space */
     cgns_zcoor *zcoor;
     cgns_array *coord;
-    int n, c;
-    void *xyz;
-    int read_full_range=1;
-    int index_dim, ierr = 0;
-    cgsize_t num = 1, npt = 0;
-    cgsize_t s_start[3], s_end[3], s_stride[3];
-    cgsize_t m_start[3], m_end[3], m_stride[3], m_dim[3];
+    int c, s_numdim;
 
      /* verify input */
-    if (type != CGNS_ENUMV(RealSingle) && type != CGNS_ENUMV(RealDouble)) {
-        cgi_error("Invalid data type for coord. array: %d",type);
+    if (m_type != CGNS_ENUMV(RealSingle) && m_type != CGNS_ENUMV(RealDouble)) {
+        cgi_error("Invalid data type for coord. array: %d", m_type);
         return CG_ERROR;
     }
      /* find address */
-    cg = cgi_get_file(file_number);
+    cg = cgi_get_file(fn);
     if (cg == 0) return CG_ERROR;
 
     if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_READ)) return CG_ERROR;
 
-     /* Get memory address for node "GridCoordinates" */
+     /* get memory address for node "GridCoordinates" */
     zcoor = cgi_get_zcoorGC(cg, B, Z);
-    if (zcoor==0) return CG_ERROR;
+    if (zcoor == 0) return CG_ERROR;
 
      /* find the coord address in the database */
     coord = 0;
     for (c=0; c<zcoor->ncoords; c++) {
-        if (strcmp(zcoor->coord[c].name, coordname)==0) {
+        if (strcmp(zcoor->coord[c].name, coordname) == 0) {
             coord = &zcoor->coord[c];
             break;
         }
@@ -2889,88 +2937,13 @@ int cg_coord_read(int file_number, int B, int Z, const char * coordname,
         return CG_NODE_NOT_FOUND;
     }
 
-    index_dim=cg->base[B-1].zone[Z-1].index_dim;
+     /* zcoor implies zone exists */
+    s_numdim = cg->base[B-1].zone[Z-1].index_dim;
 
-     /* verify that range requested does not exceed range stored */
-    for (n=0; n<index_dim; n++) {
-        if (rmin[n]>rmax[n] || rmax[n]>coord->dim_vals[n] || rmin[n]<1) {
-            cgi_error("Invalid range of data requested");
-            return CG_ERROR;
-        }
-    }
-
-     /* check if requested to return full range */
-    for (n=0; n<index_dim; n++) {
-        if (rmin[n]!=1 || rmax[n] != coord->dim_vals[n]) {
-            read_full_range=0;
-            break;
-        }
-    }
-
-    num = 1;
-    if (read_full_range) {
-        for (n = 0; n < index_dim; n++)
-            num *= coord->dim_vals[n];
-    }
-    else {
-        for (n = 0; n < index_dim; n++) {
-            npt = rmax[n] - rmin[n] + 1;
-            num *= npt;
-            s_start[n]  = rmin[n];
-            s_end[n]    = rmax[n];
-            s_stride[n] = 1;
-            m_start[n]  = 1;
-            m_end[n]    = npt;
-            m_stride[n] = 1;
-            m_dim[n]    = npt;
-        }
-    }
-
-    /* quick transfer of data if same data types */
-    if (type == cgi_datatype(coord->data_type)) {
-        if (read_full_range) {
-            if (cgio_read_all_data(cg->cgio, coord->id, coord_ptr)) {
-                cg_io_error("cgio_read_all_data");
-                return CG_ERROR;
-            }
-        }
-        else {
-            if (cgio_read_data(cg->cgio, coord->id,
-                    s_start, s_end, s_stride, index_dim, m_dim,
-                    m_start, m_end, m_stride, coord_ptr)) {
-                cg_io_error("cgio_read_data");
-                return CG_ERROR;
-            }
-        }
-        return CG_OK;
-    }
-
-    /* need to read into temp array to convert data */
-    xyz = malloc((size_t)(num*size_of(coord->data_type)));
-    if (xyz == NULL) {
-        cgi_error("Error allocating xyz");
-        return CG_ERROR;
-    }
-    if (read_full_range) {
-        if (cgio_read_all_data(cg->cgio, coord->id, xyz)) {
-            free(xyz);
-            cg_io_error("cgio_read_all_data");
-            return CG_ERROR;
-        }
-    }
-    else {
-        if (cgio_read_data(cg->cgio, coord->id,
-                s_start, s_end, s_stride, index_dim, m_dim,
-                m_start, m_end, m_stride, xyz)) {
-            free(xyz);
-            cg_io_error("cgio_read_data");
-            return CG_ERROR;
-        }
-    }
-    ierr = cgi_convert_data(num, cgi_datatype(coord->data_type),
-               xyz, type, coord_ptr);
-    free(xyz);
-    return ierr ? CG_ERROR : CG_OK;
+    return cgi_array_general_read(coord, cgns_rindindex, zcoor->rind_planes,
+                                  s_numdim, s_rmin, s_rmax,
+                                  m_type, m_numdim, m_dimvals, m_rmin, m_rmax,
+                                  coord_ptr);
 }
 
 int cg_coord_id(int file_number, int B, int Z, int C, double *coord_id)
@@ -2996,12 +2969,14 @@ int cg_coord_id(int file_number, int B, int Z, int C, double *coord_id)
 }
 
 int cg_coord_write(int file_number, int B, int Z, CGNS_ENUMT(DataType_t) type,
-                   const char * coordname, const void * coord_ptr, int *C)
+                   const char *coordname, const void *coord_ptr, int *C)
 {
     cgns_zone *zone;
     cgns_zcoor *zcoor;
-    cgns_array *coord;
-    int n, index, index_dim;
+    int n, m_numdim;
+    int status;
+
+    HDF5storage_type = CG_CONTIGUOUS;
 
      /* verify input */
     if (cgi_check_strlen(coordname)) return CG_ERROR;
@@ -3009,220 +2984,163 @@ int cg_coord_write(int file_number, int B, int Z, CGNS_ENUMT(DataType_t) type,
         cgi_error("Invalid datatype for coord. array:  %d", type);
         return CG_ERROR;
     }
-     /* get memory address for file */
+     /* get memory addresses */
     cg = cgi_get_file(file_number);
     if (cg == 0) return CG_ERROR;
-    if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_WRITE)) return CG_ERROR;
-     /* get memory address for zone */
+
     zone = cgi_get_zone(cg, B, Z);
-    if (zone==0) return CG_ERROR;
+    if (zone == 0) return CG_ERROR;
+
      /* Get memory address for node "GridCoordinates" */
     zcoor = cgi_get_zcoorGC(cg, B, Z);
-    if (zcoor==0) return CG_ERROR;
-     /* Overwrite a DataArray_t Node of same size, name and data-type: */
-    for (index=0; index<zcoor->ncoords; index++) {
-        if (strcmp(coordname, zcoor->coord[index].name)==0) {
-            coord = &(zcoor->coord[index]);
+    if (zcoor == 0) return CG_ERROR;
 
-             /* in CG_MODE_WRITE, children names must be unique */
-            if (cg->mode==CG_MODE_WRITE) {
-                cgi_error("Duplicate child name found: %s",coordname);
-                return CG_ERROR;
-            }
+    m_numdim = zone->index_dim;
 
-             /* overwrite an existing coordinate vector */
-            if (type==cgi_datatype(coord->data_type)) {
-                if (cgio_write_all_data(cg->cgio, coord->id, coord_ptr)) {
-                    cg_io_error("cgio_write_all_data");
-                    return CG_ERROR;
-                }
-                (*C) = index+1;
-                return CG_OK;
-            }
-            cgi_error("To overwrite array %s, use data-type '%s'",
-                coord->name, DataTypeName[cgi_datatype(coord->data_type)]);
-            return CG_ERROR;
+    cgsize_t m_dimvals[CGIO_MAX_DIMENSIONS];
+    cgsize_t s_rmin[CGIO_MAX_DIMENSIONS], s_rmax[CGIO_MAX_DIMENSIONS];
+    cgsize_t m_rmin[CGIO_MAX_DIMENSIONS], m_rmax[CGIO_MAX_DIMENSIONS];
+    for (n = 0; n<m_numdim; n++) {
+        m_dimvals[n] = zone->nijk[n] + zcoor->rind_planes[2*n] +
+                                       zcoor->rind_planes[2*n+1];
+        if (cgns_rindindex == CG_CONFIG_RIND_ZERO) {
+             /* old obsolete behavior (versions < 3.4) */
+            s_rmin[n] = 1;
         }
+        else {
+             /* new behavior consistent with SIDS */
+            s_rmin[n] = 1 - zcoor->rind_planes[2*n];
+        }
+        s_rmax[n] = s_rmin[n] + m_dimvals[n] - 1;
+        m_rmin[n] = 1;
+        m_rmax[n] = m_dimvals[n];
     }
 
-     /* ... or add a DataArray_t Node: */
-    if (zcoor->ncoords == 0) {
-        zcoor->coord = CGNS_NEW(cgns_array, zcoor->ncoords+1);
-    } else {
-        zcoor->coord = CGNS_RENEW(cgns_array, zcoor->ncoords+1, zcoor->coord);
-    }
-    coord = &(zcoor->coord[zcoor->ncoords]);
-    zcoor->ncoords++;
-    (*C) = zcoor->ncoords;
+    status = cg_coord_general_write(file_number, B, Z, coordname,
+                                  type, s_rmin, s_rmax,
+                                  type, m_numdim, m_dimvals, m_rmin, m_rmax,
+                                  coord_ptr, C);
 
-     /* save coord. data in memory */
-    memset(coord, 0, sizeof(cgns_array));
-    strcpy(coord->data_type,cgi_adf_datatype(type));
-    strcpy(coord->name,coordname);
-    index_dim = zone->index_dim;
-    for (n=0; n<index_dim; n++)
-        coord->dim_vals[n] = zone->nijk[n] + zcoor->rind_planes[2*n]
-                             + zcoor->rind_planes[2*n+1];
-    coord->data_dim=index_dim;
-
-     /* Create GridCoodinates_t node if not already created */
-    if (cg->filetype == CGIO_FILE_ADF || cg->filetype == CGIO_FILE_ADF2) {
-      if (zcoor->id == 0) {
-        if (cgi_new_node(zone->id, "GridCoordinates", "GridCoordinates_t",
-             &zcoor->id, "MT", 0, 0, 0)) return CG_ERROR;
-      }
-    }
-#ifdef BUILD_HDF5
-    else if (cg->filetype == CGIO_FILE_HDF5) {
-      hid_t hid;
-      to_HDF_ID(zcoor->id, hid);
-      if (hid == 0) {
-        if (cgi_new_node(zone->id, "GridCoordinates", "GridCoordinates_t",
-             &zcoor->id, "MT", 0, 0, 0)) return CG_ERROR;
-      }
-    }
-#endif
-    else {
-      return CG_ERROR;
-    }
-     /* Create DataArray_t node on disk */
-    if (cgi_new_node(zcoor->id, coord->name, "DataArray_t", &coord->id,
-        coord->data_type, index_dim, coord->dim_vals, coord_ptr)) return CG_ERROR;
-
-    return CG_OK;
+    HDF5storage_type = CG_COMPACT;
+    return status;
 }
 
 int cg_coord_partial_write(int file_number, int B, int Z,
-               CGNS_ENUMT( DataType_t )  type,
-               const char *coordname, const cgsize_t *rmin,
-                           const cgsize_t *rmax, const void *coord_ptr,
+                           CGNS_ENUMT(DataType_t) type,
+                           const char *coordname, const cgsize_t *s_rmin,
+                           const cgsize_t *s_rmax, const void *coord_ptr,
                            int *C)
 {
     cgns_zone *zone;
-    cgns_zcoor *zcoor;
-    cgns_array *coord;
-    int n, index, index_dim;
-    cgsize_t dims[CGIO_MAX_DIMENSIONS];
+    int n, m_numdim;
+    int status;
 
-     /* verify input */
-    if (cgi_check_strlen(coordname)) return CG_ERROR;
-    if (type!=CGNS_ENUMV( RealSingle ) && type!=CGNS_ENUMV( RealDouble )) {
-        cgi_error("Invalid datatype for coord. array:  %d", type);
+     /* get memory addresses */
+    cg = cgi_get_file(file_number);
+    if (cg == 0) return CG_ERROR;
+
+    zone = cgi_get_zone(cg, B, Z);
+    if (zone == 0) return CG_ERROR;
+
+    m_numdim = zone->index_dim;
+
+    if (s_rmin == NULL || s_rmax == NULL) {
+        cgi_error("NULL range value.");
         return CG_ERROR;
     }
 
-    if(rmin == NULL || rmax == NULL) {
-    cgi_error("NULL range value.");
-    return CG_ERROR;
+    cgsize_t m_dimvals[CGIO_MAX_DIMENSIONS];
+    cgsize_t m_rmin[CGIO_MAX_DIMENSIONS], m_rmax[CGIO_MAX_DIMENSIONS];
+    for (n = 0; n<m_numdim; n++) {
+        m_rmin[n] = 1;
+        m_rmax[n] = s_rmax[n] - s_rmin[n] + 1;
+        m_dimvals[n] = m_rmax[n];
     }
 
-     /* get memory address for file */
-    cg = cgi_get_file(file_number);
+    status = cg_coord_general_write(file_number, B, Z, coordname,
+                                  type, s_rmin, s_rmax,
+                                  type, m_numdim, m_dimvals, m_rmin, m_rmax,
+                                  coord_ptr, C);
+    return status;
+}
+
+int cg_coord_general_write(int fn, int B, int Z, const char *coordname,
+                           CGNS_ENUMT(DataType_t) s_type,
+                           const cgsize_t *s_rmin, const cgsize_t *s_rmax,
+                           CGNS_ENUMT(DataType_t) m_type,
+                           int m_numdim, const cgsize_t *m_dimvals,
+                           const cgsize_t *m_rmin, const cgsize_t *m_rmax,
+                           const void *coord_ptr, int *C)
+{
+     /* s_ prefix is file space, m_ prefix is memory space */
+    cgns_zone *zone;
+    cgns_zcoor *zcoor;
+    int n, s_numdim;
+    int status;
+
+    HDF5storage_type = CG_CONTIGUOUS;
+
+     /* verify input */
+    if (cgi_check_strlen(coordname)) return CG_ERROR;
+    if (s_type!=CGNS_ENUMV(RealSingle) && s_type!=CGNS_ENUMV(RealDouble)) {
+        cgi_error("Invalid file data type for coord. array: %d", s_type);
+        return CG_ERROR;
+    }
+    if (m_type != CGNS_ENUMV(RealSingle) && m_type != CGNS_ENUMV(RealDouble) &&
+        m_type != CGNS_ENUMV(Integer) && m_type != CGNS_ENUMV(LongInteger)) {
+        cgi_error("Invalid input data type for coord. array: %d", m_type);
+        return CG_ERROR;
+    }
+
+     /* get memory addresses */
+    cg = cgi_get_file(fn);
     if (cg == 0) return CG_ERROR;
 
     if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_WRITE)) return CG_ERROR;
 
-     /* get memory address for zone */
     zone = cgi_get_zone(cg, B, Z);
-    if (zone==0) return CG_ERROR;
+    if (zone == 0) return CG_ERROR;
 
      /* Get memory address for node "GridCoordinates" */
     zcoor = cgi_get_zcoorGC(cg, B, Z);
-    if (zcoor==0) return CG_ERROR;
+    if (zcoor == 0) return CG_ERROR;
 
-    /* check for valid ranges */
-    index_dim = zone->index_dim;
-    for (n = 0; n < index_dim; n++) {
-        dims[n] = zone->nijk[n] + zcoor->rind_planes[2*n] +
-                                  zcoor->rind_planes[2*n+1];
-        if (rmin[n] > rmax[n] || rmin[n] < 1 || rmax[n] > dims[n]) {
-            cgi_error("Invalid index ranges.");
-            return CG_ERROR;
-        }
+    cgsize_t s_dimvals[CGIO_MAX_DIMENSIONS];
+    s_numdim = zone->index_dim;
+    for (n = 0; n<s_numdim; n++) {
+        s_dimvals[n] = zone->nijk[n] + zcoor->rind_planes[2*n] +
+                                       zcoor->rind_planes[2*n+1];
     }
 
-     /* Overwrite a DataArray_t Node of same size, name and data-type: */
-    for (index=0; index<zcoor->ncoords; index++) {
-        if (strcmp(coordname, zcoor->coord[index].name)==0) {
-            cgsize_t m_start[CGIO_MAX_DIMENSIONS], m_end[CGIO_MAX_DIMENSIONS];
-            cgsize_t m_dim[CGIO_MAX_DIMENSIONS], stride[CGIO_MAX_DIMENSIONS];
-
-            coord = &(zcoor->coord[index]);
-            /* data type must be the same */
-            if (strcmp(coord->data_type,cgi_adf_datatype(type))) {
-                cgi_error("Mismatch in data types.");
-                return CG_ERROR;
-            }
-            for (n = 0; n < coord->data_dim; n++) {
-                m_start[n] = 1;
-                m_end[n]   = rmax[n] - rmin[n] + 1;
-                m_dim[n]   = m_end[n];
-                stride[n]  = 1;
-            }
-
-            if (cgio_write_data(cg->cgio, coord->id, rmin, rmax, stride,
-                           coord->data_dim, m_dim, m_start, m_end,
-                           stride, coord_ptr)) {
-                cg_io_error("cgio_write_data");
-                return CG_ERROR;
-            }
-            return CG_OK;
-        }
-    }
-
-     /* add a DataArray_t Node: */
-    if (zcoor->ncoords == 0) {
-        zcoor->coord = CGNS_NEW(cgns_array, zcoor->ncoords+1);
-    } else {
-        zcoor->coord = CGNS_RENEW(cgns_array, zcoor->ncoords+1, zcoor->coord);
-    }
-    coord = &(zcoor->coord[zcoor->ncoords]);
-    zcoor->ncoords++;
-    (*C) = zcoor->ncoords;
-
-     /* save coord. data in memory */
-    strcpy(coord->data_type,cgi_adf_datatype(type));
-    strcpy(coord->name,coordname);
-    coord->id=0;        /* initialize */
-    coord->link=0;
-    for (n = 0; n < index_dim; n++)
-        coord->dim_vals[n] = dims[n];
-    coord->data_dim=index_dim;
-    coord->data=0;
-    coord->ndescr=0;
-    coord->data_class=CGNS_ENUMV( DataClassNull );
-    coord->units=0;
-    coord->exponents=0;
-    coord->convert=0;
-
-     /* Create GridCoodinates_t node if not already created */
+     /* Create GridCoordinates_t node if not already created */
     if (cg->filetype == CGIO_FILE_ADF || cg->filetype == CGIO_FILE_ADF2) {
-      if (zcoor->id == 0) {
-        if (cgi_new_node(zone->id, "GridCoordinates", "GridCoordinates_t",
-             &zcoor->id, "MT", 0, 0, 0)) return CG_ERROR;
-      }
+        if (zcoor->id == 0) {
+            if (cgi_new_node(zone->id, "GridCoordinates", "GridCoordinates_t",
+                             &zcoor->id, "MT", 0, 0, 0)) return CG_ERROR;
+        }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
-      hid_t hid;
-      to_HDF_ID(zcoor->id, hid);
-      if (hid == 0) {
-        if (cgi_new_node(zone->id, "GridCoordinates", "GridCoordinates_t",
-             &zcoor->id, "MT", 0, 0, 0)) return CG_ERROR;
-      }
+        hid_t hid;
+        to_HDF_ID(zcoor->id, hid);
+        if (hid == 0) {
+            if (cgi_new_node(zone->id, "GridCoordinates", "GridCoordinates_t",
+                             &zcoor->id, "MT", 0, 0, 0)) return CG_ERROR;
+        }
     }
 #endif
     else {
-      return CG_ERROR;
+        return CG_ERROR;
     }
 
-     /* Create DataArray_t node on disk */
-    if (cgi_new_node_partial(zcoor->id, coord->name, "DataArray_t", &coord->id,
-        coord->data_type, index_dim, coord->dim_vals, rmin, rmax,
-    coord_ptr))
-    return CG_ERROR;
-
-    return CG_OK;
+    status = cgi_array_general_write(zcoor->id, &(zcoor->ncoords),
+                                   &(zcoor->coord), coordname,
+                                   cgns_rindindex, zcoor->rind_planes,
+                                   s_type, s_numdim, s_dimvals, s_rmin, s_rmax,
+                                   m_type, m_numdim, m_dimvals, m_rmin, m_rmax,
+                                   coord_ptr, C);
+    HDF5storage_type = CG_COMPACT;
+    return status;
 }
 
 /*****************************************************************************\
@@ -3847,15 +3765,11 @@ int cg_ElementPartialSize(int file_number, int B, int Z, int S,
         return CG_OK;
     }
 
-    if (read_element_data(section)) return CG_ERROR;
     if (read_offset_data(section)) return CG_ERROR;
-
-    data = (cgsize_t *)section->connect->data;
     offset_data = (cgsize_t *)section->connect_offset->data;
-    offset = cgi_element_data_size(section->el_type,
-                 start - section->range[0], data, offset_data);
-    if (offset < 0) return CG_ERROR;
-    size = offset_data[end] - offset_data[start-1];
+    if (offset_data == 0) return CG_ERROR;
+
+    size = offset_data[end-section->range[0]+1] - offset_data[start-section->range[0]];
     if (size < 0) return CG_ERROR;
     *ElementDataSize = size;
     return CG_OK;
@@ -4091,7 +4005,7 @@ int cg_elements_partial_read(int file_number, int B, int Z, int S,
                 nn = section->parelem->dim_vals[0] * 4;
                 data = (cgsize_t *)malloc((size_t)(nn * sizeof(cgsize_t)));
                 if (data == NULL) {
-                    cgi_error("malloc failed for tempory ParentData array");
+                    cgi_error("malloc failed for temporary ParentData array");
                     return CG_ERROR;
                 }
                 if (cgi_read_int_data(section->parelem->id,
@@ -4304,7 +4218,7 @@ int cg_poly_elements_partial_read(int file_number, int B, int Z, int S,
                 nn = section->parelem->dim_vals[0] * 4;
                 data = (cgsize_t *)malloc((size_t)(nn * sizeof(cgsize_t)));
                 if (data == NULL) {
-                    cgi_error("malloc failed for tempory ParentData array");
+                    cgi_error("malloc failed for temporary ParentData array");
                     return CG_ERROR;
                 }
                 if (cgi_read_int_data(section->parelem->id,
@@ -4608,7 +4522,7 @@ int cg_elements_partial_write(int file_number, int B, int Z, int S,
 
         newelems = (cgsize_t *)malloc((size_t)(cnt * newsize * sizeof(cgsize_t)));
         if (NULL == newelems) {
-            cgi_error("Error alocating new ParentElements data");
+            cgi_error("Error allocating new ParentElements data");
             return CG_ERROR;
         }
         offset = start - section->range[0];
@@ -4898,7 +4812,6 @@ int cg_poly_elements_partial_write(int file_number, int B, int Z, int S,
                 }
             }
         } else if (start > section->range[1]) {
-            cgsize_t ii;
             memcpy(newelems, oldelems, (size_t)(oldsize*sizeof(cgsize_t)));
             memcpy(newoffsets, section_offset, (size_t)((section->range[1]-section->range[0]+2)*sizeof(cgsize_t)));
             n += oldsize;
@@ -4920,7 +4833,6 @@ int cg_poly_elements_partial_write(int file_number, int B, int Z, int S,
                 j++;
             }
         } else {
-            cgsize_t ii;
             num = start - section->range[0];
             size = section_offset[num];
             memcpy(newelems, oldelems, (size_t)(size*sizeof(cgsize_t)));
@@ -5022,7 +4934,7 @@ int cg_poly_elements_partial_write(int file_number, int B, int Z, int S,
 
         newelems = (cgsize_t *)malloc((size_t)(cnt * newsize * sizeof(cgsize_t)));
         if (NULL == newelems) {
-            cgi_error("Error alocating new ParentElements data");
+            cgi_error("Error allocating new ParentElements data");
             return CG_ERROR;
         }
         offset = start - section->range[0];
@@ -5232,7 +5144,7 @@ int cg_parent_data_partial_write(int file_number, int B, int Z, int S,
         return CG_ERROR;
     }
     if (size != section->parelem->dim_vals[0]) {
-        cgi_error("internal errror - invalid ParentElements data size !!!");
+        cgi_error("internal error - invalid ParentElements data size !!!");
         return CG_ERROR;
     }
 
@@ -5254,7 +5166,7 @@ int cg_parent_data_partial_write(int file_number, int B, int Z, int S,
             return CG_ERROR;
         }
         if (size != section->parface->dim_vals[0]) {
-            cgi_error("internal errror - invalid ParentElementsPosition data size !!!");
+            cgi_error("internal error - invalid ParentElementsPosition data size !!!");
             return CG_ERROR;
         }
     }
@@ -5653,31 +5565,75 @@ int cg_field_info(int file_number, int B, int Z, int S, int F,
 }
 
 int cg_field_read(int file_number, int B, int Z, int S, const char *fieldname,
-                  CGNS_ENUMT(DataType_t) type, const cgsize_t *rmin,
-                  const cgsize_t *rmax, void *field_ptr)
+                  CGNS_ENUMT(DataType_t) type, const cgsize_t *s_rmin,
+                  const cgsize_t *s_rmax, void *field_ptr)
 {
     cgns_sol *sol;
-    cgns_array *field;
-    int n, f;
-    void *values;
-    int read_full_range=1;
-    int index_dim, ierr = CG_OK;
-    cgsize_t num = 1, npt = 0;
-    cgsize_t s_start[3], s_end[3], s_stride[3];
-    cgsize_t m_start[3], m_end[3], m_stride[3], m_dim[3];
+    int n, m_numdim;
 
-     /* verify input */
-    if (INVALID_ENUM(type,NofValidDataTypes)) {
-        cgi_error("Invalid data type requested for flow solution: %d",type);
+     /* get memory addresses */
+    cg = cgi_get_file(file_number);
+    if (cg == 0) return CG_ERROR;
+
+     /* get memory address for solution */
+    sol = cgi_get_sol(cg, B, Z, S);
+    if (sol == 0) return CG_ERROR;
+
+    if (sol->ptset == NULL)
+         /* sol implies zone exists */
+        m_numdim = cg->base[B-1].zone[Z-1].index_dim;
+    else
+        m_numdim = 1;
+
+     /* verify that range requested does not exceed range stored */
+    if (s_rmin == NULL || s_rmax == NULL) {
+        cgi_error("NULL range value.");
         return CG_ERROR;
     }
-    cg = cgi_get_file(file_number);
+
+    cgsize_t m_dimvals[CGIO_MAX_DIMENSIONS];
+    cgsize_t m_rmin[CGIO_MAX_DIMENSIONS], m_rmax[CGIO_MAX_DIMENSIONS];
+    for (n = 0; n<m_numdim; n++) {
+        m_rmin[n] = 1;
+        m_rmax[n] = s_rmax[n] - s_rmin[n] + 1;
+        m_dimvals[n] = m_rmax[n];
+    }
+
+    return cg_field_general_read(file_number, B, Z, S, fieldname,
+                                 s_rmin, s_rmax, type,
+                                 m_numdim, m_dimvals, m_rmin, m_rmax,
+                                 field_ptr);
+}
+
+int cg_field_general_read(int fn, int B, int Z, int S, const char *fieldname,
+                          const cgsize_t *s_rmin, const cgsize_t *s_rmax,
+                          CGNS_ENUMT(DataType_t) m_type,
+                          int m_numdim, const cgsize_t *m_dimvals,
+                          const cgsize_t *m_rmin, const cgsize_t *m_rmax,
+                          void *field_ptr)
+{
+     /* s_ prefix is file space, m_ prefix is memory space */
+    cgns_sol *sol;
+    cgns_array *field;
+    int f, s_numdim;
+
+     /* verify input */
+    if (INVALID_ENUM(m_type, NofValidDataTypes)) {
+        cgi_error("Invalid data type requested for flow solution: %d", m_type);
+        return CG_ERROR;
+    }
+
+     /* find address */
+    cg = cgi_get_file(fn);
     if (cg == 0) return CG_ERROR;
 
     if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_READ)) return CG_ERROR;
 
+     /* get memory address for solution */
     sol = cgi_get_sol(cg, B, Z, S);
     if (sol==0) return CG_ERROR;
+
+     /* find the field address in the database */
     field = 0;
     for (f=0; f<sol->nfields; f++) {
         if (strcmp(sol->field[f].name, fieldname)==0) {
@@ -5692,90 +5648,14 @@ int cg_field_read(int file_number, int B, int Z, int S, const char *fieldname,
     }
 
     if (sol->ptset == NULL)
-        index_dim = cg->base[B-1].zone[Z-1].index_dim;
+        s_numdim = cg->base[B-1].zone[Z-1].index_dim;
     else
-        index_dim = 1;
+        s_numdim = 1;
 
-     /* verify that range requested does not exceed range stored */
-    for (n=0; n<index_dim; n++) {
-        if (rmin[n]>rmax[n] || rmax[n]>field->dim_vals[n] || rmin[n]<1) {
-            cgi_error("Invalid range of data requested");
-            return CG_ERROR;
-        }
-    }
-
-     /* check if requested to return full range */
-    for (n=0; n<index_dim; n++) {
-        if (rmin[n]!=1 || rmax[n]!=field->dim_vals[n]) {
-            read_full_range=0;
-            break;
-        }
-    }
-
-    num = 1;
-    if (read_full_range) {
-        for (n = 0; n < index_dim; n++)
-            num *= field->dim_vals[n];
-    }
-    else {
-        for (n = 0; n < index_dim; n++) {
-            npt = rmax[n] - rmin[n] + 1;
-            num *= npt;
-            s_start[n]  = rmin[n];
-            s_end[n]    = rmax[n];
-            s_stride[n] = 1;
-            m_start[n]  = 1;
-            m_end[n]    = npt;
-            m_stride[n] = 1;
-            m_dim[n]    = npt;
-        }
-    }
-
-     /* quick transfer of data if same data types */
-    if (type == cgi_datatype(field->data_type)) {
-        if (read_full_range) {
-            if (cgio_read_all_data(cg->cgio, field->id, field_ptr)) {
-                cg_io_error("cgio_read_all_data");
-                return CG_ERROR;
-            }
-        }
-        else {
-            if (cgio_read_data(cg->cgio, field->id,
-                    s_start, s_end, s_stride, index_dim, m_dim,
-                    m_start, m_end, m_stride, field_ptr)) {
-                cg_io_error("cgio_read_data");
-                return CG_ERROR;
-            }
-        }
-        return CG_OK;
-    }
-
-    /* need to read into temp array to convert data */
-    values = malloc((size_t)(num*size_of(field->data_type)));
-    if (values == NULL) {
-        cgi_error("Error allocating values");
-        return CG_ERROR;
-    }
-    if (read_full_range) {
-        if (cgio_read_all_data(cg->cgio, field->id, values)) {
-            free(values);
-            cg_io_error("cgio_read_all_data");
-            return CG_ERROR;
-        }
-    }
-    else {
-        if (cgio_read_data(cg->cgio, field->id,
-                s_start, s_end, s_stride, index_dim, m_dim,
-                m_start, m_end, m_stride, values)) {
-            free(values);
-            cg_io_error("cgio_read_data");
-            return CG_ERROR;
-        }
-    }
-    ierr = cgi_convert_data(num, cgi_datatype(field->data_type),
-               values, type, field_ptr);
-    free(values);
-    return ierr ? CG_ERROR : CG_OK;
+    return cgi_array_general_read(field, cgns_rindindex, sol->rind_planes,
+                                  s_numdim, s_rmin, s_rmax,
+                                  m_type, m_numdim, m_dimvals, m_rmin, m_rmax,
+                                  field_ptr);
 }
 
 int cg_field_id(int file_number, int B, int Z, int S, int F, double *field_id)
@@ -5794,13 +5674,15 @@ int cg_field_id(int file_number, int B, int Z, int S, int F, double *field_id)
     return CG_OK;
 }
 
-int cg_field_write(int file_number, int B, int Z, int S, CGNS_ENUMT(DataType_t) type,
-                   const char * fieldname, const void * field_ptr, int *F)
+int cg_field_write(int file_number, int B, int Z, int S,
+                   CGNS_ENUMT(DataType_t) type, const char *fieldname,
+                   const void *field_ptr, int *F)
 {
     cgns_zone *zone;
     cgns_sol *sol;
-    cgns_array *field;
-    int index;
+    int n, m_numdim;
+
+    HDF5storage_type = CG_CONTIGUOUS;
 
      /* verify input */
     if (cgi_check_strlen(fieldname)) return CG_ERROR;
@@ -5813,97 +5695,132 @@ int cg_field_write(int file_number, int B, int Z, int S, CGNS_ENUMT(DataType_t) 
     cg = cgi_get_file(file_number);
     if (cg == 0) return CG_ERROR;
 
-    if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_WRITE)) return CG_ERROR;
-
     zone = cgi_get_zone(cg, B, Z);
     if (zone==0) return CG_ERROR;
 
+     /* get memory address for solution */
     sol = cgi_get_sol(cg, B, Z, S);
     if (sol==0) return CG_ERROR;
 
-     /* Overwrite a DataArray_t Node: */
-    for (index=0; index<sol->nfields; index++) {
-        if (strcmp(fieldname, sol->field[index].name)==0) {
-            field = &(sol->field[index]);
-
-             /* in CG_MODE_WRITE, children names must be unique */
-            if (cg->mode==CG_MODE_WRITE) {
-                cgi_error("Duplicate child name found: %s",fieldname);
-                return CG_ERROR;
-            }
-
-             /* overwrite an existing solution */
-            if (type==cgi_datatype(field->data_type)) {
-                if (cgio_write_all_data(cg->cgio, field->id, field_ptr)) {
-                    cg_io_error("cgio_write_all_data");
-                    return CG_ERROR;
-                }
-                (*F) = index+1;
-                return CG_OK;
-            }
-            cgi_error("To overwrite array %s, use data-type '%s'",
-                field->name, DataTypeName[cgi_datatype(field->data_type)]);
-            return CG_ERROR;
-        }
-    }
-     /* ... or add a DataArray_t Node: */
-    if (sol->nfields == 0) {
-        sol->field = CGNS_NEW(cgns_array, sol->nfields+1);
-    } else {
-        sol->field = CGNS_RENEW(cgns_array, sol->nfields+1, sol->field);
-    }
-    field = &(sol->field[sol->nfields]);
-    sol->nfields++;
-    (*F) = sol->nfields;
-
-     /* save data in memory */
-    memset(field, 0, sizeof(cgns_array));
-    strcpy(field->data_type, cgi_adf_datatype(type));
-    strcpy(field->name,fieldname);
-
+     /* dimension is dependent on multidim or ptset */
+    cgsize_t m_dimvals[CGIO_MAX_DIMENSIONS];
     if (sol->ptset == NULL) {
-        field->data_dim = zone->index_dim;
-        if (cgi_datasize(zone->index_dim, zone->nijk, sol->location,
-                sol->rind_planes, field->dim_vals)) return CG_ERROR;
-    } else {
-        field->data_dim = 1;
-        field->dim_vals[0] = sol->ptset->size_of_patch;
+        m_numdim = zone->index_dim;
+        if (cgi_datasize(m_numdim, zone->nijk, sol->location,
+                         sol->rind_planes, m_dimvals)) return CG_ERROR;
+    }
+    else {
+        m_numdim = 1;
+        m_dimvals[0] = sol->ptset->size_of_patch;
     }
 
-     /* Save DataArray_t node on disk: */
-    if (cgi_new_node(sol->id, field->name, "DataArray_t", &field->id,
-        field->data_type, field->data_dim, field->dim_vals, field_ptr))
-        return CG_ERROR;
+    cgsize_t s_rmin[CGIO_MAX_DIMENSIONS], s_rmax[CGIO_MAX_DIMENSIONS];
+    cgsize_t m_rmin[CGIO_MAX_DIMENSIONS], m_rmax[CGIO_MAX_DIMENSIONS];
+    for (n = 0; n < m_numdim; n++) {
+        if (cgns_rindindex == CG_CONFIG_RIND_ZERO) {
+             /* old obsolete behavior (versions < 3.4) */
+            s_rmin[n] = 1;
+            }
+        else {
+             /* new behavior consistent with SIDS */
+            s_rmin[n] = 1 - sol->rind_planes[2*n];
+                }
+        s_rmax[n] = s_rmin[n] + m_dimvals[n] - 1;
+        m_rmin[n] = 1;
+        m_rmax[n] = m_dimvals[n];
+            }
 
-    return CG_OK;
-}
+    return cg_field_general_write(file_number, B, Z, S, fieldname,
+                                  type, s_rmin, s_rmax,
+                                  type, m_numdim, m_dimvals, m_rmin, m_rmax,
+                                  field_ptr, F);
+        }
 
 int cg_field_partial_write(int file_number, int B, int Z, int S,
-               CGNS_ENUMT( DataType_t ) type, const char *fieldname,
-               const cgsize_t *rmin, const cgsize_t *rmax,
+			   CGNS_ENUMT( DataType_t ) type, const char *fieldname,
+			   const cgsize_t *s_rmin, const cgsize_t *s_rmax,
                            const void *field_ptr, int *F)
 {
     cgns_zone *zone;
     cgns_sol *sol;
-    cgns_array *field;
-    int n, index, index_dim;
-    cgsize_t dims[CGIO_MAX_DIMENSIONS];
+    int n, m_numdim;
+    int status;
 
-     /* verify input */
-    if (cgi_check_strlen(fieldname)) return CG_ERROR;
-    if (type != CGNS_ENUMV(RealSingle) && type != CGNS_ENUMV(RealDouble) &&
-        type != CGNS_ENUMV(Integer) && type != CGNS_ENUMV(LongInteger)) {
-        cgi_error("Invalid datatype for solution array %s: %d",fieldname, type);
+     /* get memory addresses */
+    cg = cgi_get_file(file_number);
+    if (cg == 0) return CG_ERROR;
+
+    zone = cgi_get_zone(cg, B, Z);
+    if (zone == 0) return CG_ERROR;
+
+     /* get memory address for solution */
+    sol = cgi_get_sol(cg, B, Z, S);
+    if (sol == 0) return CG_ERROR;
+
+     /* dimension is dependent on multidim or ptset */
+    if (sol->ptset == NULL) {
+        m_numdim = zone->index_dim;
+    }
+    else {
+        m_numdim = 1;
+    }
+
+    if (s_rmin == NULL || s_rmax == NULL) {
+        cgi_error("NULL range value.");
         return CG_ERROR;
     }
 
-    if(rmin == NULL || rmax == NULL) {
-    cgi_error("NULL range value.");
+    cgsize_t m_dimvals[CGIO_MAX_DIMENSIONS];
+    cgsize_t m_rmin[CGIO_MAX_DIMENSIONS], m_rmax[CGIO_MAX_DIMENSIONS];
+    for (n = 0; n<m_numdim; n++) {
+        m_rmin[n] = 1;
+        m_rmax[n] = s_rmax[n] - s_rmin[n] + 1;
+        m_dimvals[n] = m_rmax[n];
+    }
+
+    status = cg_field_general_write(file_number, B, Z, S, fieldname,
+                                  type, s_rmin, s_rmax,
+                                  type, m_numdim, m_dimvals, m_rmin, m_rmax,
+                                  field_ptr, F);
+
+    HDF5storage_type = CG_COMPACT;
+    return status;
+
+}
+
+int cg_field_general_write(int fn, int B, int Z, int S, const char *fieldname,
+                           CGNS_ENUMT(DataType_t) s_type,
+                           const cgsize_t *s_rmin, const cgsize_t *s_rmax,
+                           CGNS_ENUMT(DataType_t) m_type,
+                           int m_numdim, const cgsize_t *m_dimvals,
+                           const cgsize_t *m_rmin, const cgsize_t *m_rmax,
+                           const void *field_ptr, int *F)
+{
+     /* s_ prefix is file space, m_ prefix is memory space */
+    cgns_zone *zone;
+    cgns_sol *sol;
+    int s_numdim;
+    int status;
+
+    HDF5storage_type = CG_CONTIGUOUS;
+
+     /* verify input */
+    if (cgi_check_strlen(fieldname)) return CG_ERROR;
+    if (s_type != CGNS_ENUMV(RealSingle) && s_type != CGNS_ENUMV(RealDouble) &&
+        s_type != CGNS_ENUMV(Integer) && s_type != CGNS_ENUMV(LongInteger)) {
+        cgi_error("Invalid file data type for solution array %s: %d",
+                  fieldname, s_type);
+        return CG_ERROR;
+    }
+    if (m_type != CGNS_ENUMV(RealSingle) && m_type != CGNS_ENUMV(RealDouble) &&
+        m_type != CGNS_ENUMV(Integer) && m_type != CGNS_ENUMV(LongInteger)) {
+        cgi_error("Invalid input data type for solution array %s: %d",
+                  fieldname, m_type);
     return CG_ERROR;
     }
 
      /* get memory addresses */
-    cg = cgi_get_file(file_number);
+    cg = cgi_get_file(fn);
     if (cg == 0) return CG_ERROR;
 
     if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_WRITE)) return CG_ERROR;
@@ -5911,88 +5828,30 @@ int cg_field_partial_write(int file_number, int B, int Z, int S,
     zone = cgi_get_zone(cg, B, Z);
     if (zone==0) return CG_ERROR;
 
+     /* get memory address for solution */
     sol = cgi_get_sol(cg, B, Z, S);
     if (sol==0) return CG_ERROR;
 
+     /* file dimension is dependent on multidim or ptset */
+    cgsize_t s_dimvals[CGIO_MAX_DIMENSIONS];
     if (sol->ptset == NULL) {
-        index_dim = zone->index_dim;
-        if (cgi_datasize(index_dim, zone->nijk, sol->location,
-                sol->rind_planes, dims)) return CG_ERROR;
+        s_numdim = zone->index_dim;
+        if (cgi_datasize(s_numdim, zone->nijk, sol->location,
+                sol->rind_planes, s_dimvals)) return CG_ERROR;
     } else {
-        index_dim = 1;
-        dims[0] = sol->ptset->size_of_patch;
-    }
-    /* check for valid ranges */
-    for (n = 0; n < index_dim; n++) {
-        if (rmin[n] > rmax[n] || rmin[n] < 1 || rmax[n] > dims[n]) {
-            cgi_error("Invalid index ranges.");
-            return CG_ERROR;
-        }
+        s_numdim = 1;
+        s_dimvals[0] = sol->ptset->size_of_patch;
     }
 
-     /* Overwrite a DataArray_t  Node: */
-    for (index=0; index<sol->nfields; index++) {
-        if (strcmp(fieldname, sol->field[index].name)==0) {
-            cgsize_t m_start[CGIO_MAX_DIMENSIONS], m_end[CGIO_MAX_DIMENSIONS];
-            cgsize_t m_dim[CGIO_MAX_DIMENSIONS], stride[CGIO_MAX_DIMENSIONS];
+    status= cgi_array_general_write(sol->id, &(sol->nfields),
+                                   &(sol->field), fieldname,
+                                   cgns_rindindex, sol->rind_planes,
+                                   s_type, s_numdim, s_dimvals, s_rmin, s_rmax,
+                                   m_type, m_numdim, m_dimvals, m_rmin, m_rmax,
+                                   field_ptr, F);
 
-            field = &(sol->field[index]);
-            /* data type must be the same */
-            if (strcmp(field->data_type, cgi_adf_datatype(type))) {
-                cgi_error("Mismatch in data types.");
-                return CG_ERROR;
-            }
-            for (n = 0; n < field->data_dim; n++) {
-                m_start[n] = 1;
-                m_end[n]   = rmax[n] - rmin[n] + 1;
-                m_dim[n]   = m_end[n];
-                stride[n]  = 1;
-            }
-
-            if (cgio_write_data(cg->cgio, field->id, rmin, rmax, stride,
-                    field->data_dim, m_dim, m_start, m_end,
-                    stride, field_ptr)) {
-                cg_io_error("cgio_write_data");
-                return CG_ERROR;
-            }
-            return CG_OK;
-        }
-    }
-
-     /* add a DataArray_t Node: */
-    if (sol->nfields == 0) {
-        sol->field = CGNS_NEW(cgns_array, sol->nfields+1);
-    } else {
-        sol->field = CGNS_RENEW(cgns_array, sol->nfields+1, sol->field);
-    }
-    field = &(sol->field[sol->nfields]);
-    sol->nfields++;
-    (*F) = sol->nfields;
-
-     /* save data in memory */
-    strcpy(field->data_type, cgi_adf_datatype(type));
-    strcpy(field->name, fieldname);
-    field->data_dim = index_dim;
-    for (n = 0; n < index_dim; n++)
-        field->dim_vals[n] = dims[n];
-
-     /* initialize */
-    field->id = 0;
-    field->link= 0;
-    field->data=0;
-    field->ndescr= 0;
-    field->data_class= CGNS_ENUMV( DataClassNull );
-    field->units= 0;
-    field->exponents= 0;
-    field->convert= 0;
-
-     /* Save DataArray_t node on disk: */
-    if (cgi_new_node_partial(sol->id, field->name, "DataArray_t", &field->id,
-        field->data_type, index_dim, field->dim_vals, rmin, rmax,
-    field_ptr))
-    return CG_ERROR;
-
-    return CG_OK;
+    HDF5storage_type = CG_COMPACT;
+    return status;
 }
 
 /*************************************************************************\
@@ -6664,7 +6523,7 @@ int cg_hole_write(int file_number, int B, int Z, const char * holename,
              &zconn->id, "MT", 0, 0, 0)) return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
       hid_t hid;
       to_HDF_ID(zconn->id, hid);
@@ -6725,7 +6584,7 @@ int cg_nconns(int file_number, int B, int Z, int *nconns)
 }
 
 /* in cg_conn_info, donor_datatype is useless starting with version 1.27, because
-   it's always I4.  Howver this arg. is left for backward compatibility of API
+   it's always I4.  However this arg. is left for backward compatibility of API
    and to be able to read old files */
 int cg_conn_info(int file_number, int B, int Z, int I, char *connectname,
          CGNS_ENUMT(GridLocation_t) *location,
@@ -6819,7 +6678,7 @@ int cg_conn_read(int file_number, int B, int Z, int I, cgsize_t *pnts,
      /* read donor points from ADF file - data_type may be I4, R4 or R8 */
     if (conn->dptset.npts > 0) {
         cgns_ptset dptset = conn->dptset;
-        int index_dim = 0;
+        index_dim = 0;
         for (n=0; n<cg->base[B-1].nzones; n++) {
             if (strcmp(cg->base[B-1].zone[n].name,conn->donor)==0) {
             index_dim = cg->base[B-1].zone[n].type == CGNS_ENUMV(Structured) ? cell_dim : 1;
@@ -7088,7 +6947,7 @@ int cg_conn_write(int file_number, int B, int Z,  const char * connectname,
              &zconn->id, "MT", 0, 0, 0)) return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
       hid_t hid;
       to_HDF_ID(zconn->id, hid);
@@ -7477,7 +7336,7 @@ int cg_1to1_write(int file_number, int B, int Z, const char * connectname,
              &zconn->id, "MT", 0, 0, 0)) return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
       hid_t hid;
       to_HDF_ID(zconn->id, hid);
@@ -7784,7 +7643,7 @@ int cg_boco_write(int file_number, int B, int Z, const char * boconame,
              &zboco->id, "MT", 0, 0, 0)) return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
       hid_t hid;
       to_HDF_ID(zboco->id, hid);
@@ -8787,7 +8646,7 @@ int cg_bc_wallfunction_write(int file_number, int B, int Z, int BC,
              &bprop->id, "MT", 0, 0, 0)) return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
       hid_t hid;
       to_HDF_ID(bprop->id, hid);
@@ -8946,7 +8805,7 @@ int cg_bc_area_write(int file_number, int B, int Z, int BC,
              &bprop->id, "MT", 0, 0, 0)) return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
       hid_t hid;
       to_HDF_ID(bprop->id, hid);
@@ -9102,7 +8961,7 @@ int cg_conn_periodic_write(int file_number, int B, int Z, int I,
             "GridConnectivityProperty_t", &cprop->id, "MT", 0, 0, 0)) return CG_ERROR;
      }
    }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
    else if (cg->filetype == CGIO_FILE_HDF5) {
      hid_t hid;
      to_HDF_ID(cprop->id, hid);
@@ -9213,7 +9072,7 @@ int cg_conn_average_write(int file_number, int B, int Z, int I,
              "GridConnectivityProperty_t", &cprop->id, "MT", 0, 0, 0)) return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
       hid_t hid;
       to_HDF_ID(cprop->id, hid);
@@ -9367,7 +9226,7 @@ int cg_1to1_periodic_write(int file_number, int B, int Z, int I,
       return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
       hid_t hid;
       to_HDF_ID(cprop->id, hid);
@@ -9485,7 +9344,7 @@ int cg_1to1_average_write(int file_number, int B, int Z, int I,
       return CG_ERROR;
       }
     }
-#ifdef BUILD_HDF5
+#if CG_BUILD_HDF5
     else if (cg->filetype == CGIO_FILE_HDF5) {
       hid_t hid;
       to_HDF_ID(cprop->id, hid);
@@ -9670,7 +9529,7 @@ int cg_gopath(int file_number, const char *path)
     int n, len;
     const char *p = path, *s;
     int index[CG_MAX_GOTO_DEPTH];
-    char label[CG_MAX_GOTO_DEPTH][33];
+    char label[CG_MAX_GOTO_DEPTH][CGIO_MAX_NAME_LENGTH+1];
     char *lab[CG_MAX_GOTO_DEPTH];
 
     if (p == 0 || !*p) {
@@ -10124,7 +9983,7 @@ int cg_equationset_read(int *EquationDimension,
     else            (*TurbulenceModelFlag)=0;
 
     /* Version 2.1 chemistry extensions get their own read routine
-    ** for backward compatability.
+    ** for backward compatibility.
     */
     return CG_OK;
 }
@@ -10702,7 +10561,8 @@ int cg_array_info(int A, char *ArrayName, CGNS_ENUMT(DataType_t) *DataType,
      /* verify input */
     if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_READ)) return CG_ERROR;
 
-    array = cgi_array_address(CG_MODE_READ, A, "dummy", &ier);
+    int have_dup = 0;
+    array = cgi_array_address(CG_MODE_READ, 0, A, "dummy", &have_dup, &ier);
     if (array==0) return ier;
 
     strcpy(ArrayName, array->name);
@@ -10724,7 +10584,8 @@ int cg_array_read(int A, void *Data)
      /* verify input */
     if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_READ)) return CG_ERROR;
 
-    array = cgi_array_address(CG_MODE_READ, A, "dummy", &ier);
+    int have_dup = 0;
+    array = cgi_array_address(CG_MODE_READ, 0, A, "dummy", &have_dup, &ier);
     if (array==0) return ier;
 
     for (n=0; n<array->data_dim; n++) num *= array->dim_vals[n];
@@ -10753,7 +10614,8 @@ int cg_array_read_as(int A, CGNS_ENUMT(DataType_t) type, void *Data)
      /* verify input */
     if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_READ)) return CG_ERROR;
 
-    array = cgi_array_address(CG_MODE_READ, A, "dummy", &ier);
+    int have_dup = 0;
+    array = cgi_array_address(CG_MODE_READ, 0, A, "dummy", &have_dup, &ier);
     if (array==0) return ier;
 
     for (n=0; n<array->data_dim; n++) num *= array->dim_vals[n];
@@ -10800,6 +10662,46 @@ int cg_array_read_as(int A, CGNS_ENUMT(DataType_t) type, void *Data)
     return ier ? CG_ERROR : CG_OK;
 }
 
+int cg_array_general_read(int A,
+                          const cgsize_t *s_rmin, const cgsize_t *s_rmax,
+                          CGNS_ENUMT(DataType_t) m_type,
+                          int m_numdim, const cgsize_t *m_dimvals,
+                          const cgsize_t *m_rmin, const cgsize_t *m_rmax,
+                          void *data)
+{
+     /* s_ prefix is file space, m_ prefix is memory space */
+    cgns_array *array;
+    int s_numdim, ier = CG_OK;
+
+    CHECK_FILE_OPEN
+
+     /* verify input */
+    if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_READ)) return CG_ERROR;
+
+     /* find address */
+    int have_dup = 0;
+    array = cgi_array_address(CG_MODE_READ, 0, A, "dummy", &have_dup, &ier);
+    if (array == 0) return ier;
+
+    s_numdim = array->data_dim;
+
+     /* special for Character arrays */
+    if ((m_type != CGNS_ENUMV(Character) &&
+         cgi_datatype(array->data_type) == CGNS_ENUMV(Character))) {
+        cgi_error("Error exit:  Character array can only be read as character");
+            return CG_ERROR;
+        }
+
+     /* do we have rind planes? */
+    int *rind_planes = cgi_rind_address(CG_MODE_READ, &ier);
+    if (ier != CG_OK) rind_planes = NULL;
+
+    return cgi_array_general_read(array, cgns_rindindex, rind_planes,
+                                  s_numdim, s_rmin, s_rmax,
+                                  m_type, m_numdim, m_dimvals, m_rmin, m_rmax,
+                                  data);
+}
+
 int cg_array_write(const char * ArrayName, CGNS_ENUMT(DataType_t) DataType,
                    int DataDimension, const cgsize_t * DimensionVector,
                    const void * Data)
@@ -10807,6 +10709,8 @@ int cg_array_write(const char * ArrayName, CGNS_ENUMT(DataType_t) DataType,
     cgns_array *array;
     int n, ier=0;
     double posit_id;
+
+    HDF5storage_type = CG_CONTIGUOUS;
 
     CHECK_FILE_OPEN
 
@@ -10833,8 +10737,8 @@ int cg_array_write(const char * ArrayName, CGNS_ENUMT(DataType_t) DataType,
     }
 
      /* get address */
-    array = cgi_array_address(CG_MODE_WRITE, 0, ArrayName, &ier);
-    /* printf("\tcgi_array_address = %x\n",array); */
+    int have_dup = 0;
+    array = cgi_array_address(CG_MODE_WRITE, 0, 0, ArrayName, &have_dup, &ier);
 
     if (array==0) return ier;
 
@@ -10857,8 +10761,70 @@ int cg_array_write(const char * ArrayName, CGNS_ENUMT(DataType_t) DataType,
     if (cgi_posit_id(&posit_id)) return CG_ERROR;
     if (cgi_new_node(posit_id, array->name, "DataArray_t", &array->id,
         array->data_type, array->data_dim, array->dim_vals, Data)) return CG_ERROR;
-
+    HDF5storage_type = CG_COMPACT;
     return CG_OK;
+}
+
+int cg_array_general_write(const char *arrayname,
+                           CGNS_ENUMT(DataType_t) s_type,
+                           int s_numdim, const cgsize_t *s_dimvals,
+                           const cgsize_t *s_rmin, const cgsize_t *s_rmax,
+                           CGNS_ENUMT(DataType_t) m_type,
+                           int m_numdim, const cgsize_t* m_dimvals,
+                           const cgsize_t *m_rmin, const cgsize_t *m_rmax,
+                           const void *data)
+{
+     /* s_ prefix is file space, m_ prefix is memory space */
+  int n, ier = CG_OK;
+
+    CHECK_FILE_OPEN
+
+     /* verify input */
+    if (cgi_check_strlen(arrayname)) return CG_ERROR;
+    if (cgi_check_mode(cg->filename, cg->mode, CG_MODE_WRITE)) return CG_ERROR;
+    if (s_type != CGNS_ENUMV(RealSingle) && s_type != CGNS_ENUMV(RealDouble) &&
+        s_type != CGNS_ENUMV(Integer) && s_type != CGNS_ENUMV(LongInteger) &&
+        s_type != CGNS_ENUMV(Character)) {
+        cgi_error("Invalid file data type for data array: %d", s_type);
+        return CG_ERROR;
+    }
+    if (m_type != CGNS_ENUMV(RealSingle) && m_type != CGNS_ENUMV(RealDouble) &&
+        m_type != CGNS_ENUMV(Integer) && m_type != CGNS_ENUMV(LongInteger) &&
+        m_type != CGNS_ENUMV(Character)) {
+        cgi_error("Invalid input data type for data array: %d", m_type);
+        return CG_ERROR;
+    }
+
+     /*** verification for dataset in file */
+     /* verify the rank and dimensions of the file-space array */
+    if (s_numdim <= 0 || s_numdim > CGIO_MAX_DIMENSIONS) {
+        cgi_error("Data arrays are limited to %d dimensions in file",
+                  CGIO_MAX_DIMENSIONS);
+        return CG_ERROR;
+    }
+
+    if (s_dimvals == NULL) {
+        cgi_error("NULL dimension value");
+        return CG_ERROR;
+    }
+
+    for (n=0; n<s_numdim; n++) {
+        if (s_dimvals[n] < 1) {
+            cgi_error("Invalid array dimension for file: %d", s_dimvals[n]);
+            return CG_ERROR;
+        }
+    }
+
+     /* do we have rind planes? */
+    int *rind_planes = cgi_rind_address(CG_MODE_READ, &ier);
+    if (ier != CG_OK) rind_planes = NULL;
+
+    int A = 0;  /* unused */
+    return cgi_array_general_write(0.0, NULL, NULL, arrayname,
+                                   cgns_rindindex, rind_planes,
+                                   s_type, s_numdim, s_dimvals, s_rmin, s_rmax,
+                                   m_type, m_numdim, m_dimvals, m_rmin, m_rmax,
+                                   data, &A);
 }
 
 /*----------------------------------------------------------------------*/
@@ -10972,7 +10938,7 @@ int cg_rind_read(int *RindData)
 int cg_rind_write(const int * RindData)
 {
     int n, ier=0;
-    int *rind, index_dim;
+    int *rind, index_dim, narrays;
     double posit_id;
 
     CHECK_FILE_OPEN
@@ -10995,6 +10961,16 @@ int cg_rind_write(const int * RindData)
      /* save data in file & if different from default (6*0) */
     if (cgi_posit_id(&posit_id)) return CG_ERROR;
     if (cgi_write_rind(posit_id, rind, index_dim)) return CG_ERROR;
+
+     /* Writing rind planes invalidates dimensions of existing arrays.  The rind
+        planes are still written but an error is returned */
+    ier = cg_narrays(&narrays);
+    if (ier == CG_OK && narrays > 0) {
+        cgi_error("Writing rind planes invalidates dimensions of existing "
+                  "array(s).");
+        return CG_ERROR;
+    }
+
     return CG_OK;
 }
 
@@ -12851,7 +12827,7 @@ int cg_delete_node(const char *node_name)
     if (strcmp(posit->label,"CGNSBase_t")==0) {
         cgns_base *parent = (cgns_base *)posit->posit;
 
-     /* Case 1: node_label = can have multiple occurence:  */
+     /* Case 1: node_label = can have multiple occurrence:  */
         if (strcmp(node_label,"Zone_t")==0)
             CGNS_DELETE_SHIFT(nzones, zone, cgi_free_zone)
         else if (strcmp(node_label,"Family_t")==0)

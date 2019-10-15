@@ -10,6 +10,9 @@
 #endif
 #include "cgnslib.h"
 
+/* from cgns_internal: so we can reset expected error messages */
+void cgi_error(const char *format, ...);
+
 #define NUM_SIDE 5
 
 #define TRACE(x)   printf("** TRACE [%d] %s\n", __LINE__, x )
@@ -27,15 +30,15 @@ void error_exit (char *where)
     exit (1);
 }
 
-int main (int argc, char *argv[])
+int main ()
 {
     int i, j, k, n, nfam, nb, ng, nnames, ier;
 
     int cgfile, cgbase, cgtree, cgzone, cgfam, cgcoord, cgbc, cgsr;
     float exp[5];
     char outfile[33], name[33], tname[33];
-    char family_name[20*33];
-    char tfamily_name[20*33];
+    char family_name[CG_MAX_GOTO_DEPTH*33+1];
+    char tfamily_name[CG_MAX_GOTO_DEPTH*33+1];
 
     /* ================================================================ WRITING TESTS */
 
@@ -61,7 +64,7 @@ int main (int argc, char *argv[])
     if( cg_base_write( cgfile, "FamilyTree", 3, 3, &cgtree ) )
         error_exit( "family tree base");
 
-    // SOME GRID DATA
+    /* SOME GRID DATA */
     for (n = 0; n < 3; n++) {
         sizes[n]   = NUM_SIDE;
         sizes[n+3] = NUM_SIDE - 1;
@@ -121,7 +124,7 @@ int main (int argc, char *argv[])
      *      +- Family4.3
      */
 
-    // PATH BASED FAMILY NODE CREATION
+    /* PATH BASED FAMILY NODE CREATION */
 
     if( cg_family_write(cgfile, cgtree, "Family1", &cgfam ) )
         error_exit( "write Family1" );
@@ -148,7 +151,7 @@ int main (int argc, char *argv[])
         error_exit( "write /FamilyTree/Family2" );
     printf( "Conventional creation of Family_t node \"Family3\" after non conventional creation [%d]\n", cgfam );
 
-    // NODE BASED FAMILY NODE CREATION
+    /* NODE BASED FAMILY NODE CREATION */
 
     if( cg_goto( cgfile, cgtree, "Family2",0,NULL))
         error_exit( "goto Family2" );
@@ -192,13 +195,39 @@ int main (int argc, char *argv[])
     if( cg_family_write(cgfile, cgtree, "/FamilyTree/Family4/Family4.3", &cgfam ))
         error_exit( "write Family4.3");
 
+    /* Add failing Family */
+    if ( cg_family_write(cgfile, cgtree, "", &cgfam ) ==  CG_OK )
+	    error_exit( "writing empty Family did not failed");
+    cg_error_print();
+    cgi_error("no CGNS error reported");  /* reset */
+    if ( cg_family_write(cgfile, cgtree, "///", &cgfam ) ==  CG_OK )
+        error_exit( "writing Family of / only did not failed");
+    cg_error_print();
+    cgi_error("no CGNS error reported");  /* reset */
+    /* Family of size 33*CG_MAX_GOTO_DEPTH+1 should fail  */
+    char big_family_name[33*CG_MAX_GOTO_DEPTH+2];
+    for (n=0; n<33*CG_MAX_GOTO_DEPTH+2; n++){
+        big_family_name[n] = 'a';
+        if (n % 33 == 0)
+            big_family_name[n] = '/';
+    }
+    strncpy(big_family_name, "/FamilyTree/", 12);
+    big_family_name[33*CG_MAX_GOTO_DEPTH+1] = '\0';
+    if ( cg_family_write(cgfile, cgtree, big_family_name , &cgfam ) ==  CG_OK )
+        error_exit( "writing too long Family did not failed");
+    cg_error_print();
+    cgi_error("no CGNS error reported");  /* reset */
+    big_family_name[33*CG_MAX_GOTO_DEPTH] = '\0';
+    if ( cg_family_write(cgfile, cgtree, big_family_name , &cgfam ))
+        error_exit( "writing long Family failed");
+
     if (cg_goto(cgfile, cgtree,  NULL))
         error_exit("go to family tree base");
     if( cg_node_family_write( "FamilyN", &cgfam ) )
         error_exit( "write /FamilyTree/FamilyN (node based writem follow cg_gopath) ");
     printf("Creation of Family_t write /FamilyTree/FamilyN (node based writem follow cg_gopath) [%d]\n", cgfam );
 
-    // FAMILY (TREE) NAME CREATION
+    /* FAMILY (TREE) NAME CREATION */
 
     if (cg_goto(cgfile, cgbase, "Zone", 0, NULL))
         error_exit("go to zone");
@@ -275,7 +304,7 @@ int main (int argc, char *argv[])
             error_exit("user data multifam write");
     }
 
-    // FAMILY NAMES IN TREE
+    /* FAMILY NAMES IN TREE */
     if( cg_gopath( cgfile, "/FamilyTree/Family1/Family1.1") )
         error_exit( "gopath /FamilyTree/Family1/Family1.1 ");
 
@@ -315,6 +344,11 @@ int main (int argc, char *argv[])
             cgbase = n+1;
     }
 
+    if( cg_gopath( cgfile, "/FamilyTree") )
+        error_exit( "gopath /FamilyTree ");
+    if (cg_delete_node("aaaaaaaaaaaaaaaaaaaaa") )
+        error_exit("delete long tree");
+
     printf( "Structured %d, FamilyTree %d\n", cgbase, cgtree );
 
     if (cg_nfamilies(cgfile, cgtree, &nfam))
@@ -322,7 +356,7 @@ int main (int argc, char *argv[])
 
     CHECK("cg_nfamilies", nfam == 5);
 
-    // FAMILY NODE DELETION
+    /* FAMILY NODE DELETION */
 
     if (cg_goto(cgfile, cgtree,  "Family1", 0, "Family1.2",0, "Family1.2.1",0, NULL))
             error_exit("goto topfamily");
@@ -335,7 +369,6 @@ int main (int argc, char *argv[])
 
     if (cg_node_nfamilies(&nfam))
         error_exit("number of family after delete");
-    /*printf( "%d\n", nfam );*/
     CHECK("number of family after delete", nfam == 1);
 
 
@@ -346,11 +379,10 @@ int main (int argc, char *argv[])
 
     if (cg_node_nfamilies(&nfam))
         error_exit("number of family after delete");
-    /*printf( "%d\n", nfam );*/
     CHECK("number of family after delete", nfam == 2);
 
 
-    // FAMILY NODE OVERWRITING
+    /* FAMILY NODE OVERWRITING */
     if( cg_gopath( cgfile, "/FamilyTree/Family1/Family1.2/Family1.2.1"))
         error_exit("goto path /FamilyTree/Family1/Family1.2/Family1.2.1");
 
@@ -358,7 +390,6 @@ int main (int argc, char *argv[])
         error_exit( "Rewrite 1.2.1.2");
     if (cg_node_nfamilies(&nfam))
         error_exit("number of family after overwritten");
-    /*printf( "%d\n", nfam );*/
     CHECK("number of family after overwritten (unchanged)", nfam == 1);
 
 

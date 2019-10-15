@@ -36,7 +36,7 @@
 !
 MODULE cgns
 
-  USE ISO_C_BINDING
+  USE ISO_C_BINDING, ONLY : C_INT, C_FLOAT, C_DOUBLE, C_LONG_LONG, C_CHAR, C_PTR
   IMPLICIT NONE
 
 #include "cgnstypes_f03.h"
@@ -358,7 +358,7 @@ MODULE cgns
   END ENUM
 
 !** Any model type will accept both ModelTypeNull and ModelTypeUserDefined.
-!** The following models will accept these values as vaild...
+!** The following models will accept these values as valid...
 !**
 !** GasModel_t: Ideal, VanderWaals, CaloricallyPerfect, ThermallyPerfect,
 !**    ConstantDensity, RedlichKwong
@@ -932,6 +932,20 @@ MODULE cgns
   END INTERFACE
 
   INTERFACE
+     SUBROUTINE cg_set_rind_zero_f(ier) BIND(C, NAME="cg_set_rind_zero_f")
+       IMPLICIT NONE
+       INTEGER, INTENT(OUT) :: ier
+     END SUBROUTINE cg_set_rind_zero_f
+  END INTERFACE
+
+  INTERFACE
+     SUBROUTINE cg_set_rind_core_f(ier) BIND(C, NAME="cg_set_rind_core_f")
+       IMPLICIT NONE
+       INTEGER, INTENT(OUT) :: ier
+     END SUBROUTINE cg_set_rind_core_f
+  END INTERFACE
+
+  INTERFACE
      SUBROUTINE cg_get_cgio_f(fn, cgio_num, ier) BIND(C, NAME="cg_get_cgio_f")
        IMPLICIT NONE
        INTEGER :: fn
@@ -1254,7 +1268,7 @@ MODULE cgns
        INTEGER, INTENT(OUT) :: ier
      END SUBROUTINE cg_fambc_write_f
   END INTERFACE
-  
+
   INTERFACE
      SUBROUTINE cg_node_fambc_read_f(BC, fambc_name, bocotype, ier) !BIND(C, NAME="cg_node_fambc_read_f")
        IMPORT :: c_char, cgenum_t
@@ -1275,8 +1289,8 @@ MODULE cgns
        INTEGER :: BC
        INTEGER, INTENT(OUT) :: ier
      END SUBROUTINE cg_node_fambc_write_f
-  END INTERFACE  
-  
+  END INTERFACE
+
 
   ! - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *\
   !      Read and write GeometryReference_t Nodes                         *
@@ -1369,7 +1383,7 @@ MODULE cgns
        INTEGER, INTENT(OUT) :: ier
      END SUBROUTINE cg_part_write_f
   END INTERFACE
-  
+
   INTERFACE
      SUBROUTINE cg_node_part_read_f(G, P, part_name, ier) !BIND(C, NAME="cg_node_part_read_f")
        IMPORT :: c_char
@@ -1391,7 +1405,7 @@ MODULE cgns
        INTEGER, INTENT(OUT) :: ier
      END SUBROUTINE cg_node_part_write_f
   END INTERFACE
-  
+
   ! - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *\
   !      Read and write DiscreteData_t Nodes                              *
   ! - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
@@ -3868,7 +3882,7 @@ MODULE cgns
      END SUBROUTINE cg_exit_on_error_f
   END INTERFACE
 
-#ifdef BUILD_PARALLEL
+#if CG_BUILD_PARALLEL_F
 
   !======================================================================
   ! parallel IO interface

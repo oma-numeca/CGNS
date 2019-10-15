@@ -57,3 +57,10 @@ cmake_install.cmake
 install_manifest.txt
 CTestTestfile.cmake
 
+/_build-fortran/
+/_build/
+/.project
+/CGNS.creator.user
+/build_cgns-nompi.sh
+/build_cgns.sh
+/build_fortran.sh
